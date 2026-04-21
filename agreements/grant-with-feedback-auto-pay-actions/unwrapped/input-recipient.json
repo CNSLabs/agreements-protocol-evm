@@ -1,0 +1,8 @@
+{
+  "inputId": "recipientSigning",
+  "type": "signedFields",
+  "values": {
+    "recipientName": "Leif",
+    "recipientSignature": "0xsignature"
+  }
+} 

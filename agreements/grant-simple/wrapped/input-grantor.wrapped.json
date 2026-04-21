@@ -1,0 +1,146 @@
+{
+  "issuer": {
+    "id": "did:pkh:eip155:1:0x67fD5A5ec681b1208308813a2B3A0DD431Be7278"
+  },
+  "credentialSubject": {
+    "inputId": "grantorData",
+    "type": "signedFields",
+    "values": {
+      "grantorName": "Damian",
+      "scope": "Development of Web3 tooling",
+      "termDuration": "6 months",
+      "effectiveDate": "2024-03-20T12:00:00Z",
+      "recipientEthAddress": "0xBe32388C134a952cdBCc5673E93d46FfD8b85065"
+    },
+    "documentHash": "0x6668dd0a5d1ca40298dff5687a5a339c15de196b6a0b1c94a59a4f6886c39916"
+  },
+  "type": [
+    "VerifiableCredential",
+    "AgreementInputCredential"
+  ],
+  "issuanceDate": "2025-06-10T15:56:28.471Z",
+  "@context": [
+    "https://www.w3.org/2018/credentials/v1"
+  ],
+  "proof": {
+    "verificationMethod": "did:pkh:eip155:1:0x67fD5A5ec681b1208308813a2B3A0DD431Be7278#blockchainAccountId",
+    "created": "2025-06-10T15:56:28.471Z",
+    "proofPurpose": "assertionMethod",
+    "type": "EthereumEip712Signature2021",
+    "proofValue": "0x4a48d945b7f882d906e34175c390fb841642a91d8e733ba40127e0db309b392b49867a158813817bcae9bed0c8c194f54dd1c8cef73fbfde4b414a19e57802cc1c",
+    "eip712": {
+      "domain": {
+        "chainId": 1,
+        "name": "VerifiableCredential",
+        "version": "1"
+      },
+      "types": {
+        "EIP712Domain": [
+          {
+            "name": "name",
+            "type": "string"
+          },
+          {
+            "name": "version",
+            "type": "string"
+          },
+          {
+            "name": "chainId",
+            "type": "uint256"
+          }
+        ],
+        "CredentialSubject": [
+          {
+            "name": "documentHash",
+            "type": "string"
+          },
+          {
+            "name": "inputId",
+            "type": "string"
+          },
+          {
+            "name": "type",
+            "type": "string"
+          },
+          {
+            "name": "values",
+            "type": "Values"
+          }
+        ],
+        "Values": [
+          {
+            "name": "effectiveDate",
+            "type": "string"
+          },
+          {
+            "name": "grantorName",
+            "type": "string"
+          },
+          {
+            "name": "recipientEthAddress",
+            "type": "string"
+          },
+          {
+            "name": "scope",
+            "type": "string"
+          },
+          {
+            "name": "termDuration",
+            "type": "string"
+          }
+        ],
+        "Issuer": [
+          {
+            "name": "id",
+            "type": "string"
+          }
+        ],
+        "Proof": [
+          {
+            "name": "created",
+            "type": "string"
+          },
+          {
+            "name": "proofPurpose",
+            "type": "string"
+          },
+          {
+            "name": "type",
+            "type": "string"
+          },
+          {
+            "name": "verificationMethod",
+            "type": "string"
+          }
+        ],
+        "VerifiableCredential": [
+          {
+            "name": "@context",
+            "type": "string[]"
+          },
+          {
+            "name": "credentialSubject",
+            "type": "CredentialSubject"
+          },
+          {
+            "name": "issuanceDate",
+            "type": "string"
+          },
+          {
+            "name": "issuer",
+            "type": "Issuer"
+          },
+          {
+            "name": "proof",
+            "type": "Proof"
+          },
+          {
+            "name": "type",
+            "type": "string[]"
+          }
+        ]
+      },
+      "primaryType": "VerifiableCredential"
+    }
+  }
+}

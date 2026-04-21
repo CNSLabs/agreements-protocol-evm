@@ -1,0 +1,8 @@
+{
+  "inputId": "m1RejectSubmission",
+  "type": "signedFields",
+  "values": {
+    "feedback": "Month 1 submission needs more work. Please provide links to all 3 PRs and ensure documentation follows our style guide.",
+    "isApproved": false
+  }
+}

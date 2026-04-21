@@ -1,0 +1,7 @@
+{
+  "inputId": "m2WorkSubmission",
+  "type": "signedFields",
+  "values": {
+    "submissionContent": "Month 2 KPI Submission: Implemented and merged feature X with full test coverage. Enhanced community engagement through improved documentation and 15+ responses to community questions. Reference: PR-234"
+  }
+}

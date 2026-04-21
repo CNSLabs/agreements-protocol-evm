@@ -1,0 +1,7 @@
+{
+  "inputId": "m3TerminateAgreement",
+  "type": "signedFields",
+  "values": {
+    "feedback": "Terminating agreement - final deliverables do not meet quality standards."
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "inputId": "m2ApproveSubmission",
+  "type": "signedFields",
+  "values": {
+    "feedback": "Excellent progress on Month 2 KPIs. Feature X is working well and community feedback has been very positive.",
+    "isApproved": true
+  }
+}

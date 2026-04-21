@@ -1,0 +1,9 @@
+{
+  "inputId": "workTokenSentTx",
+  "type": "signedFields",
+  "values": {
+    "workTokenSentTx": "0x15cdc2d5157685faaca3da6928fe412608747e76a7daee0800d5c79c2b76a0cd"
+  }
+}
+
+

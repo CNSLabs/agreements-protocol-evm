@@ -1,0 +1,7 @@
+{
+  "inputId": "m1WorkSubmission",
+  "type": "signedFields",
+  "values": {
+    "submissionContent": "Month 1 KPI Submission: Completed 3 implementation tasks addressing critical bugs. Updated onboarding documentation with clearer examples and step-by-step guides. Reference: PR-123"
+  }
+}

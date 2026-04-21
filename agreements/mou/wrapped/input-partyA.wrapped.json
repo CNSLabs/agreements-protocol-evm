@@ -1,0 +1,146 @@
+{
+  "issuer": {
+    "id": "did:pkh:eip155:1:0x67fD5A5ec681b1208308813a2B3A0DD431Be7278"
+  },
+  "credentialSubject": {
+    "inputId": "partyAData",
+    "type": "signedFields",
+    "values": {
+      "partyAName": "Damian",
+      "termDuration": "1 year",
+      "effectiveDate": "2025-05-20",
+      "scope": "Sample scope",
+      "partyBEthAddress": "0xBe32388C134a952cdBCc5673E93d46FfD8b85065"
+    },
+    "documentHash": "0x558d3f860d4c9007cf359adb7d2780a53ea770bb7d5e9b2aeaa17d9e40a56e56"
+  },
+  "type": [
+    "VerifiableCredential",
+    "AgreementInputCredential"
+  ],
+  "issuanceDate": "2025-06-10T15:56:29.820Z",
+  "@context": [
+    "https://www.w3.org/2018/credentials/v1"
+  ],
+  "proof": {
+    "verificationMethod": "did:pkh:eip155:1:0x67fD5A5ec681b1208308813a2B3A0DD431Be7278#blockchainAccountId",
+    "created": "2025-06-10T15:56:29.820Z",
+    "proofPurpose": "assertionMethod",
+    "type": "EthereumEip712Signature2021",
+    "proofValue": "0xfce5a201e60b725ca5f73b7c1a3f4cad0f086ad55f15723c0d8b76f446755e104eb22cde4123b87cd6926b9dccb060dcc5f5117d919e9277f57f9532900744781c",
+    "eip712": {
+      "domain": {
+        "chainId": 1,
+        "name": "VerifiableCredential",
+        "version": "1"
+      },
+      "types": {
+        "EIP712Domain": [
+          {
+            "name": "name",
+            "type": "string"
+          },
+          {
+            "name": "version",
+            "type": "string"
+          },
+          {
+            "name": "chainId",
+            "type": "uint256"
+          }
+        ],
+        "CredentialSubject": [
+          {
+            "name": "documentHash",
+            "type": "string"
+          },
+          {
+            "name": "inputId",
+            "type": "string"
+          },
+          {
+            "name": "type",
+            "type": "string"
+          },
+          {
+            "name": "values",
+            "type": "Values"
+          }
+        ],
+        "Values": [
+          {
+            "name": "effectiveDate",
+            "type": "string"
+          },
+          {
+            "name": "partyAName",
+            "type": "string"
+          },
+          {
+            "name": "partyBEthAddress",
+            "type": "string"
+          },
+          {
+            "name": "scope",
+            "type": "string"
+          },
+          {
+            "name": "termDuration",
+            "type": "string"
+          }
+        ],
+        "Issuer": [
+          {
+            "name": "id",
+            "type": "string"
+          }
+        ],
+        "Proof": [
+          {
+            "name": "created",
+            "type": "string"
+          },
+          {
+            "name": "proofPurpose",
+            "type": "string"
+          },
+          {
+            "name": "type",
+            "type": "string"
+          },
+          {
+            "name": "verificationMethod",
+            "type": "string"
+          }
+        ],
+        "VerifiableCredential": [
+          {
+            "name": "@context",
+            "type": "string[]"
+          },
+          {
+            "name": "credentialSubject",
+            "type": "CredentialSubject"
+          },
+          {
+            "name": "issuanceDate",
+            "type": "string"
+          },
+          {
+            "name": "issuer",
+            "type": "Issuer"
+          },
+          {
+            "name": "proof",
+            "type": "Proof"
+          },
+          {
+            "name": "type",
+            "type": "string[]"
+          }
+        ]
+      },
+      "primaryType": "VerifiableCredential"
+    }
+  }
+}

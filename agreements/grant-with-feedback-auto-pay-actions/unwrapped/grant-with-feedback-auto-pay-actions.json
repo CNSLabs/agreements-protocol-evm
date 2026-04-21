@@ -1,0 +1,320 @@
+{
+  "metadata": {
+    "id": "did:example:mou-v1",
+    "templateId": "did:template:mou-v1",
+    "version": "1.0.0",
+    "createdAt": "2024-03-20T12:00:00Z",
+    "name": "Grant With Feedback (Auto Pay via Actions)",
+    "author": "Agreements Protocol",
+    "description": "Variant of grant-with-feedback-auto-pay that defines a human-readable on-chain payment action in execution.actions, compiled and installed at agreement initialization."
+  },
+  "variables": {
+    "grantorEthAddress": {
+      "type": "address",
+      "name": "Grantor Address",
+      "description": "Ethereum address of the granting party",
+      "validation": { "required": true }
+    },
+    "recipientEthAddress": {
+      "type": "address",
+      "name": "Recipient Address",
+      "description": "Ethereum address of the recipient party",
+      "validation": { "required": true }
+    },
+    "workTokenAddress": {
+      "type": "address",
+      "name": "Work Token (ERC-20) Address",
+      "description": "ERC-20 token contract used for payment",
+      "validation": { "required": true }
+    },
+    "paymentAmount": {
+      "type": "uint256",
+      "name": "Payment Amount",
+      "description": "Amount of work tokens to pay on work acceptance",
+      "validation": { "required": true, "min": 1 }
+    },
+    "grantorName": {
+      "type": "string",
+      "name": "Grantor Name",
+      "description": "Legal name of the granting party",
+      "validation": { "required": true, "minLength": 1 }
+    },
+    "grantorSignature": {
+      "type": "signature",
+      "name": "Grantor Signature",
+      "description": "Digital signature of the granting party",
+      "validation": { "required": true }
+    },
+    "recipientName": {
+      "type": "string",
+      "name": "Recipient Name",
+      "description": "Legal name of the recipient party",
+      "validation": { "required": true, "minLength": 1 }
+    },
+    "recipientSignature": {
+      "type": "signature",
+      "name": "Recipient Signature",
+      "description": "Digital signature of the recipient party",
+      "validation": { "required": true }
+    },
+    "effectiveDate": {
+      "type": "dateTime",
+      "name": "Effective Date",
+      "description": "The date when this grant becomes effective",
+      "validation": { "required": true }
+    },
+    "scope": {
+      "type": "string",
+      "name": "Scope of Cooperation",
+      "description": "The scope of cooperation between the parties",
+      "validation": { "required": true }
+    },
+    "termDuration": {
+      "type": "string",
+      "name": "Term Duration",
+      "description": "The duration of the agreement",
+      "validation": { "required": true }
+    }
+  },
+  "content": {
+    "type": "md",
+    "data": "# GRANT AGREEMENT (AUTO PAY VIA ACTIONS)\n\nThis is a demo variant where payment is an on-chain action installed at agreement initialization and executed atomically upon work acceptance."
+  },
+  "execution": {
+    "states": {
+      "AWAITING_TEMPLATE_VARIABLES": {
+        "name": "Awaiting Template Variables",
+        "description": "Grantor needs to fill out the template variables."
+      },
+      "AWAITING_RECIPIENT_SIGNATURE": {
+        "name": "Pending Recipient Signature",
+        "description": "This state awaits until Recipient signing the agreement."
+      },
+      "AWAITING_GRANTOR_SIGNATURE": {
+        "name": "Pending Grantor Signature",
+        "description": "This state awaits Grantor's final acceptance of Recipient's data."
+      },
+      "AWAITING_WORK_SUBMISSION": {
+        "name": "Awaiting Work Submission",
+        "description": "The agreement has been accepted by both parties. Awaiting work submission."
+      },
+      "WORK_IN_REVIEW": {
+        "name": "Work In Review",
+        "description": "The work has been submitted by recipient and is now awaiting grantor review."
+      },
+      "WORK_ACCEPTED_AND_PAID": {
+        "name": "Grant Payment Fulfilled",
+        "description": "The work has been submitted, reviewed, accepted, and payment has been executed."
+      },
+      "REJECTED": {
+        "name": "Agreement Rejected",
+        "description": "The agreement has been rejected by Grantor and will not proceed."
+      }
+    },
+    "initialize": {
+      "name": "Initialize Grant",
+      "description": "Initialize the grant with grantor/recipient addresses and payment parameters",
+      "initialState": "AWAITING_TEMPLATE_VARIABLES",
+      "data": {
+        "grantorEthAddress": "${variables.grantorEthAddress}",
+        "recipientEthAddress": "${variables.recipientEthAddress}",
+        "workTokenAddress": "${variables.workTokenAddress}",
+        "paymentAmount": "${variables.paymentAmount}"
+      }
+    },
+    "inputs": {
+      "grantorData": {
+        "type": "VerifiedCredentialEIP712",
+        "schema": "verified-credential-eip712.schema.json",
+        "displayName": "Template Variable Submission",
+        "description": "Grantor fills in terms, including scope, duration, and effective date.",
+        "data": {
+          "grantorName": "${variables.grantorName}",
+          "scope": "${variables.scope}",
+          "termDuration": "${variables.termDuration}",
+          "effectiveDate": "${variables.effectiveDate}"
+        },
+        "issuer": "${variables.grantorEthAddress.value}"
+      },
+      "recipientSigning": {
+        "type": "VerifiedCredentialEIP712",
+        "schema": "verified-credential-eip712.schema.json",
+        "displayName": "Recipient Signature",
+        "description": "Signature from Recipient accepting the grant terms.",
+        "data": {
+          "recipientName": "${variables.recipientName}",
+          "recipientSignature": "${variables.recipientSignature}"
+        },
+        "issuer": "${variables.recipientEthAddress.value}"
+      },
+      "grantorSigning": {
+        "type": "VerifiedCredentialEIP712",
+        "schema": "verified-credential-eip712.schema.json",
+        "displayName": "Grantor Signature",
+        "description": "Signature from Grantor accepting grant terms.",
+        "data": { "grantorSignature": "${variables.grantorSignature}" },
+        "issuer": "${variables.grantorEthAddress.value}"
+      },
+      "grantorRejection": {
+        "type": "VerifiedCredentialEIP712",
+        "schema": "verified-credential-eip712.schema.json",
+        "displayName": "Reject Signing",
+        "description": "Grantor rejects grant terms with a reason.",
+        "data": {
+          "grantorRejectionReason": {
+            "type": "string",
+            "name": "Grantor Rejection Reason",
+            "validation": { "required": true }
+          }
+        },
+        "issuer": "${variables.grantorEthAddress.value}"
+      },
+      "workSubmission": {
+        "type": "VerifiedCredentialEIP712",
+        "schema": "verified-credential-eip712.schema.json",
+        "displayName": "Work Submission",
+        "description": "Recipient submits completed work for review.",
+        "data": {
+          "submissionHash": {
+            "type": "string",
+            "name": "Submission Hash",
+            "description": "Hash of the work submission content",
+            "validation": { "required": true }
+          },
+          "submissionUrl": {
+            "type": "string",
+            "name": "Submission URL",
+            "description": "URL to access the submitted work content",
+            "validation": { "required": true }
+          }
+        },
+        "issuer": "${variables.recipientEthAddress.value}"
+      },
+      "workAccepted": {
+        "type": "VerifiedCredentialEIP712",
+        "schema": "verified-credential-eip712.schema.json",
+        "displayName": "Work Accepted",
+        "description": "Grantor accepts the submitted work and provides comments.",
+        "data": {
+          "acceptanceComments": {
+            "type": "string",
+            "name": "Acceptance Comments",
+            "description": "Grantor's comments on the accepted work",
+            "validation": { "required": true }
+          }
+        },
+        "issuer": "${variables.grantorEthAddress.value}"
+      },
+      "workResubmissionRequested": {
+        "type": "VerifiedCredentialEIP712",
+        "schema": "verified-credential-eip712.schema.json",
+        "displayName": "Work Resubmission Requested",
+        "description": "Grantor requests changes to submitted work.",
+        "data": {
+          "resubmissionReason": {
+            "type": "string",
+            "name": "Resubmission Reason",
+            "description": "Reason why work needs to be resubmitted",
+            "validation": { "required": true }
+          },
+          "resubmissionInstructions": {
+            "type": "string",
+            "name": "Resubmission Instructions",
+            "description": "Instructions for work resubmission",
+            "validation": { "required": true }
+          }
+        },
+        "issuer": "${variables.grantorEthAddress.value}"
+      },
+      "workRejected": {
+        "type": "VerifiedCredentialEIP712",
+        "schema": "verified-credential-eip712.schema.json",
+        "displayName": "Work Rejected",
+        "description": "Grantor rejects the submitted work.",
+        "data": {
+          "rejectionReason": {
+            "type": "string",
+            "name": "Rejection Reason",
+            "description": "Reason for rejecting the submitted work",
+            "validation": { "required": true }
+          }
+        },
+        "issuer": "${variables.grantorEthAddress.value}"
+      }
+    },
+    "actions": [
+      {
+        "id": "payOnWorkAccepted",
+        "when": { "from": "WORK_IN_REVIEW", "input": "workAccepted" },
+        "call": {
+          "type": "evmCall",
+          "target": "${variables.workTokenAddress.value}",
+          "value": "0",
+          "abi": [
+            {
+              "type": "function",
+              "name": "transferFrom",
+              "stateMutability": "nonpayable",
+              "inputs": [
+                { "name": "from", "type": "address" },
+                { "name": "to", "type": "address" },
+                { "name": "value", "type": "uint256" }
+              ],
+              "outputs": [{ "name": "", "type": "bool" }]
+            }
+          ],
+          "method": "transferFrom",
+          "args": [
+            "${variables.grantorEthAddress.value}",
+            "${variables.recipientEthAddress.value}",
+            "${variables.paymentAmount.value}"
+          ]
+        },
+        "revertOnFailure": true
+      }
+    ],
+    "transitions": [
+      {
+        "from": "AWAITING_TEMPLATE_VARIABLES",
+        "to": "AWAITING_RECIPIENT_SIGNATURE",
+        "conditions": [{ "type": "isValid", "input": "grantorData" }]
+      },
+      {
+        "from": "AWAITING_RECIPIENT_SIGNATURE",
+        "to": "AWAITING_GRANTOR_SIGNATURE",
+        "conditions": [{ "type": "isValid", "input": "recipientSigning" }]
+      },
+      {
+        "from": "AWAITING_GRANTOR_SIGNATURE",
+        "to": "AWAITING_WORK_SUBMISSION",
+        "conditions": [{ "type": "isValid", "input": "grantorSigning" }]
+      },
+      {
+        "from": "AWAITING_WORK_SUBMISSION",
+        "to": "WORK_IN_REVIEW",
+        "conditions": [{ "type": "isValid", "input": "workSubmission" }]
+      },
+      {
+        "from": "WORK_IN_REVIEW",
+        "to": "WORK_ACCEPTED_AND_PAID",
+        "conditions": [{ "type": "isValid", "input": "workAccepted" }]
+      },
+      {
+        "from": "WORK_IN_REVIEW",
+        "to": "AWAITING_WORK_SUBMISSION",
+        "conditions": [{ "type": "isValid", "input": "workResubmissionRequested" }]
+      },
+      {
+        "from": "WORK_IN_REVIEW",
+        "to": "AWAITING_WORK_SUBMISSION",
+        "conditions": [{ "type": "isValid", "input": "workRejected" }]
+      },
+      {
+        "from": "AWAITING_GRANTOR_SIGNATURE",
+        "to": "REJECTED",
+        "conditions": [{ "type": "isValid", "input": "grantorRejection" }]
+      }
+    ]
+  }
+}
+

@@ -1,0 +1,10 @@
+{
+  "inputId": "grantorData",
+  "type": "signedFields",
+  "values": {
+    "grantorName": "Damian",
+    "scope": "Development of Web3 tooling",
+    "termDuration": "6 months",
+    "effectiveDate": "2024-03-20T12:00:00Z"
+  }
+}

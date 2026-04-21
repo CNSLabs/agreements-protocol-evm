@@ -1,0 +1,7 @@
+{
+  "inputId": "m1TerminateAgreement",
+  "type": "signedFields",
+  "values": {
+    "feedback": "Terminating agreement due to lack of progress on KPIs."
+  }
+}

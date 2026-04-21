@@ -1,0 +1,505 @@
+{
+  "metadata": {
+    "id": "did:example:grant-agreement-3-monthly-milestones-1",
+    "templateId": "did:template:grant-agreement-3-monthly-milestones-v1",
+    "version": "1.0.0",
+    "createdAt": "2026-02-03T00:00:00Z",
+    "name": "Grant Agreement - 3 Monthly Milestones",
+    "author": "CNS Labs Example",
+    "description": "Grant agreement with signature gating and 3 monthly KPI milestones"
+  },
+  "variables": {
+    "effectiveDate": {
+      "type": "dateTime",
+      "name": "Effective Date",
+      "description": "Date when the agreement becomes effective",
+      "validation": {
+        "required": true
+      }
+    },
+    "projectName": {
+      "type": "string",
+      "name": "Project Name",
+      "description": "Grant identifier or project name",
+      "validation": {
+        "required": true,
+        "minLength": 1
+      }
+    },
+    "granteeLegalName": {
+      "type": "string",
+      "name": "Grantee Legal Name",
+      "description": "Full legal name of the grantee",
+      "validation": {
+        "required": true,
+        "minLength": 1
+      }
+    },
+    "granteeCountry": {
+      "type": "string",
+      "name": "Country of Residence",
+      "description": "Country of residence of the grantee",
+      "validation": {
+        "required": true,
+        "minLength": 1
+      }
+    },
+    "granteeWalletAddress": {
+      "type": "address",
+      "name": "Grantee Wallet Address",
+      "description": "Ethereum address receiving grant funds",
+      "validation": {
+        "required": true
+      }
+    },
+    "granteeEmail": {
+      "type": "string",
+      "name": "Grantee Email",
+      "description": "Email address to receive notifications",
+      "validation": {
+        "required": true,
+        "minLength": 3
+      }
+    },
+    "totalGrantAmount": {
+      "type": "number",
+      "name": "Total Grant Amount",
+      "description": "Total grant amount denominated in USDT",
+      "validation": {
+        "required": true,
+        "min": 0
+      }
+    },
+    "installmentAmount": {
+      "type": "number",
+      "name": "Installment Amount",
+      "description": "Amount per monthly installment in USDT",
+      "validation": {
+        "required": true,
+        "min": 0
+      }
+    },
+    "month1KpiSection": {
+      "type": "string",
+      "name": "Month 1 KPI Section",
+      "description": "Markdown block describing Month 1 KPI details",
+      "validation": {
+        "required": true,
+        "minLength": 1
+      }
+    },
+    "month2KpiSection": {
+      "type": "string",
+      "name": "Month 2 KPI Section",
+      "description": "Markdown block describing Month 2 KPI details",
+      "validation": {
+        "required": true,
+        "minLength": 1
+      }
+    },
+    "month3KpiSection": {
+      "type": "string",
+      "name": "Month 3 KPI Section",
+      "description": "Markdown block describing Month 3 KPI details",
+      "validation": {
+        "required": true,
+        "minLength": 1
+      }
+    },
+    "grantorWalletAddress": {
+      "type": "address",
+      "name": "Grantor Wallet Address",
+      "description": "Ethereum address for the grantor signer",
+      "validation": {
+        "required": true
+      }
+    }
+  },
+  "content": {
+    "type": "md",
+    "data": "# Grant Agreement - 3 Monthly Milestones\n\nThis sample grant agreement is entered into as of **${variables.effectiveDate}** between a grant coordinator and a grantee.\n\n## Grant Coordinator\n\n**Wallet Address (Ethereum):** ${variables.grantorWalletAddress}\n\n## Grantee\n\n**Project Name:** ${variables.projectName}  \n**Legal Name:** ${variables.granteeLegalName}  \n**Country of Residence:** ${variables.granteeCountry}  \n**Wallet Address (Ethereum):** ${variables.granteeWalletAddress}  \n**Email address:** ${variables.granteeEmail}\n\n## Payment Schedule\n\n- **Total Grant Amount:** ${variables.totalGrantAmount} USDT  \n- **Installment Amount:** ${variables.installmentAmount} USDT  \n- **Payment Structure:** Three monthly installments\n\n## KPI Appendix\n\n${variables.month1KpiSection}\n\n${variables.month2KpiSection}\n\n${variables.month3KpiSection}\n"
+  },
+  "execution": {
+    "states": {
+      "PENDING_GRANTEE_SIGNATURE": {
+        "name": "Pending Grantee Signature",
+        "description": "Awaiting grantee signature to accept the agreement"
+      },
+      "PENDING_GRANTOR_SIGNATURE": {
+        "name": "Pending Grantor Signature",
+        "description": "Awaiting grantor signature to accept the agreement"
+      },
+      "MONTH_1_KPI_SUBMISSION": {
+        "name": "Month 1 KPI Submission",
+        "description": "Awaiting Month 1 work submission from grantee"
+      },
+      "MONTH_1_KPI_REVIEW": {
+        "name": "Month 1 KPI Review",
+        "description": "Grantor reviewing Month 1 submission"
+      },
+      "MONTH_2_KPI_SUBMISSION": {
+        "name": "Month 2 KPI Submission",
+        "description": "Awaiting Month 2 work submission from grantee"
+      },
+      "MONTH_2_KPI_REVIEW": {
+        "name": "Month 2 KPI Review",
+        "description": "Grantor reviewing Month 2 submission"
+      },
+      "MONTH_3_KPI_SUBMISSION": {
+        "name": "Month 3 KPI Submission",
+        "description": "Awaiting Month 3 work submission from grantee"
+      },
+      "MONTH_3_KPI_REVIEW": {
+        "name": "Month 3 KPI Review",
+        "description": "Grantor reviewing Month 3 submission"
+      },
+      "COMPLETE": {
+        "name": "Grant Complete",
+        "description": "All 3 months completed successfully"
+      },
+      "AGREEMENT_TERMINATED": {
+        "name": "Agreement Terminated",
+        "description": "Agreement terminated by grantor"
+      }
+    },
+    "initialize": {
+      "name": "Initialize Grant",
+      "description": "Initialize the grant with all template variables",
+      "initialState": "PENDING_GRANTEE_SIGNATURE",
+      "data": {
+        "effectiveDate": "${variables.effectiveDate}",
+        "projectName": "${variables.projectName}",
+        "granteeLegalName": "${variables.granteeLegalName}",
+        "granteeCountry": "${variables.granteeCountry}",
+        "granteeWalletAddress": "${variables.granteeWalletAddress}",
+        "granteeEmail": "${variables.granteeEmail}",
+        "totalGrantAmount": "${variables.totalGrantAmount}",
+        "installmentAmount": "${variables.installmentAmount}",
+        "month1KpiSection": "${variables.month1KpiSection}",
+        "month2KpiSection": "${variables.month2KpiSection}",
+        "month3KpiSection": "${variables.month3KpiSection}",
+        "grantorWalletAddress": "${variables.grantorWalletAddress}"
+      }
+    },
+    "inputs": {
+        "granteeSigning": {
+          "type": "VerifiedCredentialEIP712",
+          "schema": "verified-credential-eip712.schema.json",
+          "displayName": "Grantee Signature",
+          "description": "Grantee signs to accept the agreement terms.",
+          "data": {
+            "granteeSignature": ""
+          },
+          "issuer": "${variables.granteeWalletAddress.value}"
+        },
+        "grantorSigning": {
+          "type": "VerifiedCredentialEIP712",
+          "schema": "verified-credential-eip712.schema.json",
+          "displayName": "Grantor Signature",
+          "description": "Grantor signs to accept the agreement terms.",
+          "data": {
+            "grantorSignature": ""
+          },
+          "issuer": "${variables.grantorWalletAddress.value}"
+        },
+        "m1WorkSubmission": {
+          "type": "VerifiedCredentialEIP712",
+          "schema": "verified-credential-eip712.schema.json",
+          "displayName": "Month 1 Work Submission",
+          "description": "Grantee submits Month 1 KPI evidence",
+          "data": {
+            "submissionContent": ""
+          },
+          "issuer": "${variables.granteeWalletAddress.value}"
+        },
+        "m1ApproveSubmission": {
+          "type": "VerifiedCredentialEIP712",
+          "schema": "verified-credential-eip712.schema.json",
+          "displayName": "Month 1 Approval",
+          "description": "Grantor approves Month 1 KPI submission",
+          "data": {
+            "feedback": "",
+            "isApproved": true
+          },
+          "issuer": "${variables.grantorWalletAddress.value}"
+        },
+        "m1RejectSubmission": {
+          "type": "VerifiedCredentialEIP712",
+          "schema": "verified-credential-eip712.schema.json",
+          "displayName": "Month 1 Rejection",
+          "description": "Grantor rejects Month 1 KPI submission",
+          "data": {
+            "feedback": "",
+            "isApproved": false
+          },
+          "issuer": "${variables.grantorWalletAddress.value}"
+        },
+        "m1TerminateAgreement": {
+          "type": "VerifiedCredentialEIP712",
+          "schema": "verified-credential-eip712.schema.json",
+          "displayName": "Month 1 Termination",
+          "description": "Grantor terminates the agreement during Month 1",
+          "data": {
+            "feedback": ""
+          },
+          "issuer": "${variables.grantorWalletAddress.value}"
+        },
+        "m2WorkSubmission": {
+          "type": "VerifiedCredentialEIP712",
+          "schema": "verified-credential-eip712.schema.json",
+          "displayName": "Month 2 Work Submission",
+          "description": "Grantee submits Month 2 KPI evidence",
+          "data": {
+            "submissionContent": ""
+          },
+          "issuer": "${variables.granteeWalletAddress.value}"
+        },
+        "m2ApproveSubmission": {
+          "type": "VerifiedCredentialEIP712",
+          "schema": "verified-credential-eip712.schema.json",
+          "displayName": "Month 2 Approval",
+          "description": "Grantor approves Month 2 KPI submission",
+          "data": {
+            "feedback": "",
+            "isApproved": true
+          },
+          "issuer": "${variables.grantorWalletAddress.value}"
+        },
+        "m2RejectSubmission": {
+          "type": "VerifiedCredentialEIP712",
+          "schema": "verified-credential-eip712.schema.json",
+          "displayName": "Month 2 Rejection",
+          "description": "Grantor rejects Month 2 KPI submission",
+          "data": {
+            "feedback": "",
+            "isApproved": false
+          },
+          "issuer": "${variables.grantorWalletAddress.value}"
+        },
+        "m2TerminateAgreement": {
+          "type": "VerifiedCredentialEIP712",
+          "schema": "verified-credential-eip712.schema.json",
+          "displayName": "Month 2 Termination",
+          "description": "Grantor terminates the agreement during Month 2",
+          "data": {
+            "feedback": ""
+          },
+          "issuer": "${variables.grantorWalletAddress.value}"
+        },
+        "m3WorkSubmission": {
+          "type": "VerifiedCredentialEIP712",
+          "schema": "verified-credential-eip712.schema.json",
+          "displayName": "Month 3 Work Submission",
+          "description": "Grantee submits Month 3 KPI evidence",
+          "data": {
+            "submissionContent": ""
+          },
+          "issuer": "${variables.granteeWalletAddress.value}"
+        },
+        "m3ApproveSubmission": {
+          "type": "VerifiedCredentialEIP712",
+          "schema": "verified-credential-eip712.schema.json",
+          "displayName": "Month 3 Approval",
+          "description": "Grantor approves Month 3 KPI submission",
+          "data": {
+            "feedback": "",
+            "isApproved": true
+          },
+          "issuer": "${variables.grantorWalletAddress.value}"
+        },
+        "m3RejectSubmission": {
+          "type": "VerifiedCredentialEIP712",
+          "schema": "verified-credential-eip712.schema.json",
+          "displayName": "Month 3 Rejection",
+          "description": "Grantor rejects Month 3 KPI submission",
+          "data": {
+            "feedback": "",
+            "isApproved": false
+          },
+          "issuer": "${variables.grantorWalletAddress.value}"
+        },
+        "m3TerminateAgreement": {
+          "type": "VerifiedCredentialEIP712",
+          "schema": "verified-credential-eip712.schema.json",
+          "displayName": "Month 3 Termination",
+          "description": "Grantor terminates the agreement during Month 3",
+          "data": {
+            "feedback": ""
+          },
+          "issuer": "${variables.grantorWalletAddress.value}"
+        }
+      },
+      "transitions": [
+        {
+          "from": "PENDING_GRANTEE_SIGNATURE",
+          "to": "PENDING_GRANTOR_SIGNATURE",
+          "conditions": [
+            {
+              "type": "isValid",
+              "input": "granteeSigning"
+            }
+          ]
+        },
+        {
+          "from": "PENDING_GRANTOR_SIGNATURE",
+          "to": "MONTH_1_KPI_SUBMISSION",
+          "conditions": [
+            {
+              "type": "isValid",
+              "input": "grantorSigning"
+            }
+          ]
+        },
+        {
+          "from": "MONTH_1_KPI_SUBMISSION",
+          "to": "MONTH_1_KPI_REVIEW",
+          "conditions": [
+            {
+              "type": "isValid",
+              "input": "m1WorkSubmission"
+            }
+          ]
+        },
+        {
+          "from": "MONTH_1_KPI_REVIEW",
+          "to": "MONTH_1_KPI_SUBMISSION",
+          "conditions": [
+            {
+              "type": "isValid",
+              "input": "m1RejectSubmission"
+            }
+          ]
+        },
+        {
+          "from": "MONTH_1_KPI_REVIEW",
+          "to": "MONTH_2_KPI_SUBMISSION",
+          "conditions": [
+            {
+              "type": "isValid",
+              "input": "m1ApproveSubmission"
+            }
+          ]
+        },
+        {
+          "from": "MONTH_1_KPI_SUBMISSION",
+          "to": "AGREEMENT_TERMINATED",
+          "conditions": [
+            {
+              "type": "isValid",
+              "input": "m1TerminateAgreement"
+            }
+          ]
+        },
+        {
+          "from": "MONTH_1_KPI_REVIEW",
+          "to": "AGREEMENT_TERMINATED",
+          "conditions": [
+            {
+              "type": "isValid",
+              "input": "m1TerminateAgreement"
+            }
+          ]
+        },
+        {
+          "from": "MONTH_2_KPI_SUBMISSION",
+          "to": "MONTH_2_KPI_REVIEW",
+          "conditions": [
+            {
+              "type": "isValid",
+              "input": "m2WorkSubmission"
+            }
+          ]
+        },
+        {
+          "from": "MONTH_2_KPI_REVIEW",
+          "to": "MONTH_2_KPI_SUBMISSION",
+          "conditions": [
+            {
+              "type": "isValid",
+              "input": "m2RejectSubmission"
+            }
+          ]
+        },
+        {
+          "from": "MONTH_2_KPI_REVIEW",
+          "to": "MONTH_3_KPI_SUBMISSION",
+          "conditions": [
+            {
+              "type": "isValid",
+              "input": "m2ApproveSubmission"
+            }
+          ]
+        },
+        {
+          "from": "MONTH_2_KPI_SUBMISSION",
+          "to": "AGREEMENT_TERMINATED",
+          "conditions": [
+            {
+              "type": "isValid",
+              "input": "m2TerminateAgreement"
+            }
+          ]
+        },
+        {
+          "from": "MONTH_2_KPI_REVIEW",
+          "to": "AGREEMENT_TERMINATED",
+          "conditions": [
+            {
+              "type": "isValid",
+              "input": "m2TerminateAgreement"
+            }
+          ]
+        },
+        {
+          "from": "MONTH_3_KPI_SUBMISSION",
+          "to": "MONTH_3_KPI_REVIEW",
+          "conditions": [
+            {
+              "type": "isValid",
+              "input": "m3WorkSubmission"
+            }
+          ]
+        },
+        {
+          "from": "MONTH_3_KPI_REVIEW",
+          "to": "MONTH_3_KPI_SUBMISSION",
+          "conditions": [
+            {
+              "type": "isValid",
+              "input": "m3RejectSubmission"
+            }
+          ]
+        },
+        {
+          "from": "MONTH_3_KPI_REVIEW",
+          "to": "COMPLETE",
+          "conditions": [
+            {
+              "type": "isValid",
+              "input": "m3ApproveSubmission"
+            }
+          ]
+        },
+        {
+          "from": "MONTH_3_KPI_SUBMISSION",
+          "to": "AGREEMENT_TERMINATED",
+          "conditions": [
+            {
+              "type": "isValid",
+              "input": "m3TerminateAgreement"
+            }
+          ]
+        },
+        {
+          "from": "MONTH_3_KPI_REVIEW",
+          "to": "AGREEMENT_TERMINATED",
+          "conditions": [
+            {
+              "type": "isValid",
+              "input": "m3TerminateAgreement"
+            }
+          ]
+        }
+      ]
+  }
+}

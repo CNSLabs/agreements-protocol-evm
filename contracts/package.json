@@ -1,0 +1,41 @@
+{
+  "name": "@agreements-protocol/contracts",
+  "version": "1.0.0",
+  "description": "Smart contracts for the Agreements Protocol",
+  "main": "index.js",
+  "scripts": {
+    "compile": "hardhat compile",
+    "lint": "tsc --noEmit",
+    "test": "hardhat test",
+    "test:unit": "hardhat test 'test/*.ts'",
+    "test:integration": "hardhat test 'test/integration/*.ts'",
+    "test:gas": "hardhat test --grep 'gas' || true",
+    "gas:check": "hardhat test && npx hardhat run scripts/check-gas-thresholds.ts",
+    "deploy": "hardhat run scripts/deploy.ts",
+    "deploy:local": "hardhat run scripts/deploy.ts --network localhost",
+    "node": "hardhat node",
+    "node:fork": "HARDHAT_FORK=true hardhat node --fork https://rpc.sepolia.linea.build",
+    "slither": "slither . --config-file slither.config.json",
+    "clean": "hardhat clean"
+  },
+  "keywords": [
+    "smart-contracts",
+    "hardhat",
+    "ethereum"
+  ],
+  "author": "",
+  "license": "BUSL-1.1",
+  "dependencies": {
+    "@openzeppelin/contracts": "^5.0.0"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^4.0.0",
+    "@nomicfoundation/hardhat-verify": "^2.0.0",
+    "@typechain/ethers-v6": "^0.5.1",
+    "@typechain/hardhat": "^9.1.0",
+    "hardhat": "^2.19.0",
+    "typescript": "^5.3.0",
+    "ts-node": "^10.9.2",
+    "dotenv": "^16.3.1"
+  }
+}

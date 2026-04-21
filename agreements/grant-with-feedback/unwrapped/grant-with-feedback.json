@@ -1,0 +1,399 @@
+{
+  "metadata": {
+    "id": "did:example:mou-v1",
+    "templateId": "did:template:mou-v1",
+    "version": "1.0.0",
+    "createdAt": "2024-03-20T12:00:00Z",
+    "name": "Simple Grant",
+    "author": "Agreements Protocol",
+    "description": "Template for simple fixed amount grant between two parties"
+  },
+  "variables": {
+    "grantorEthAddress": {
+      "type": "address",
+      "name": "Grantor Address",
+      "description": "Ethereum address of the granting party",
+      "validation": {
+        "required": true
+      }
+    },
+    "grantorName": {
+      "type": "string",
+      "name": "Grantor Name",
+      "description": "Legal name of the granting party",
+      "validation": {
+        "required": true,
+        "minLength": 1
+      }
+    },
+    "grantorSignature": {
+      "type": "signature",
+      "name": "Grantor Signature",
+      "description": "Digital signature of the granting party",
+      "validation": {
+        "required": true
+      }
+    },
+    "recipientEthAddress": {
+      "type": "address",
+      "name": "Recipient Address",
+      "description": "Ethereum address of the recipient party",
+      "validation": {
+        "required": true
+      }
+    },
+    "recipientName": {
+      "type": "string",
+      "name": "Recipient Name",
+      "description": "Legal name of the recipient party",
+      "validation": {
+        "required": true,
+        "minLength": 1
+      }
+    },
+    "recipientSignature": {
+      "type": "signature",
+      "name": "Recipient Signature",
+      "description": "Digital signature of the recipient party",
+      "validation": {
+        "required": true
+      }
+    },
+    "effectiveDate": {
+      "type": "dateTime",
+      "name": "Effective Date",
+      "description": "The date when this grant becomes effective",
+      "validation": {
+        "required": true
+      }
+    },
+    "scope": {
+      "type": "string",
+      "name": "Scope of Cooperation",
+      "description": "The scope of cooperation between the parties",
+      "validation": {
+        "required": true
+      }
+    },
+    "termDuration": {
+      "type": "string",
+      "name": "Term Duration",
+      "description": "The duration of the agreement",
+      "validation": {
+        "required": true
+      }
+    },
+    "workTokenSentTx": {
+      "type": "txHash",
+      "name": "Transaction Hash",
+      "validation": {
+        "required": true
+      },
+      "txMetadata": {
+        "transactionType": "contractCall",
+        "method": "transfer",
+        "params": {
+          "to": "0xBe32388C134a952cdBCc5673E93d46FfD8b85065",
+          "value": 100
+        },
+        "contractReference": "${contracts.workToken}",
+        "signer": "0x67fD5A5ec681b1208308813a2B3A0DD431Be7278"
+      }
+    }
+  },
+  "contracts": {
+    "workToken": {
+      "description": "The Work Token",
+      "address": "0x12be78ca652191616f49420dfa28214bafe9326c",
+      "chainId": "59141",
+      "abi": "[{\"inputs\":[{\"internalType\":\"address\",\"name\":\"initialOwner\",\"type\":\"address\"}],\"stateMutability\":\"nonpayable\",\"type\":\"constructor\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"spender\",\"type\":\"address\"},{\"internalType\":\"uint256\",\"name\":\"allowance\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"needed\",\"type\":\"uint256\"}],\"name\":\"ERC20InsufficientAllowance\",\"type\":\"error\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"sender\",\"type\":\"address\"},{\"internalType\":\"uint256\",\"name\":\"balance\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"needed\",\"type\":\"uint256\"}],\"name\":\"ERC20InsufficientBalance\",\"type\":\"error\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"approver\",\"type\":\"address\"}],\"name\":\"ERC20InvalidApprover\",\"type\":\"error\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"receiver\",\"type\":\"address\"}],\"name\":\"ERC20InvalidReceiver\",\"type\":\"error\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"sender\",\"type\":\"address\"}],\"name\":\"ERC20InvalidSender\",\"type\":\"error\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"spender\",\"type\":\"address\"}],\"name\":\"ERC20InvalidSpender\",\"type\":\"error\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"owner\",\"type\":\"address\"}],\"name\":\"OwnableInvalidOwner\",\"type\":\"error\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"account\",\"type\":\"address\"}],\"name\":\"OwnableUnauthorizedAccount\",\"type\":\"error\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"address\",\"name\":\"owner\",\"type\":\"address\"},{\"indexed\":true,\"internalType\":\"address\",\"name\":\"spender\",\"type\":\"address\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"value\",\"type\":\"uint256\"}],\"name\":\"Approval\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"address\",\"name\":\"previousOwner\",\"type\":\"address\"},{\"indexed\":true,\"internalType\":\"address\",\"name\":\"newOwner\",\"type\":\"address\"}],\"name\":\"OwnershipTransferred\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"address\",\"name\":\"from\",\"type\":\"address\"},{\"indexed\":true,\"internalType\":\"address\",\"name\":\"to\",\"type\":\"address\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"value\",\"type\":\"uint256\"}],\"name\":\"Transfer\",\"type\":\"event\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"owner\",\"type\":\"address\"},{\"internalType\":\"address\",\"name\":\"spender\",\"type\":\"address\"}],\"name\":\"allowance\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"spender\",\"type\":\"address\"},{\"internalType\":\"uint256\",\"name\":\"value\",\"type\":\"uint256\"}],\"name\":\"approve\",\"outputs\":[{\"internalType\":\"bool\",\"name\":\"\",\"type\":\"bool\"}],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"account\",\"type\":\"address\"}],\"name\":\"balanceOf\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"decimals\",\"outputs\":[{\"internalType\":\"uint8\",\"name\":\"\",\"type\":\"uint8\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"to\",\"type\":\"address\"},{\"internalType\":\"uint256\",\"name\":\"amount\",\"type\":\"uint256\"}],\"name\":\"mint\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"name\",\"outputs\":[{\"internalType\":\"string\",\"name\":\"\",\"type\":\"string\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"owner\",\"outputs\":[{\"internalType\":\"address\",\"name\":\"\",\"type\":\"address\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"renounceOwnership\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"symbol\",\"outputs\":[{\"internalType\":\"string\",\"name\":\"\",\"type\":\"string\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"totalSupply\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"to\",\"type\":\"address\"},{\"internalType\":\"uint256\",\"name\":\"value\",\"type\":\"uint256\"}],\"name\":\"transfer\",\"outputs\":[{\"internalType\":\"bool\",\"name\":\"\",\"type\":\"bool\"}],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"from\",\"type\":\"address\"},{\"internalType\":\"address\",\"name\":\"to\",\"type\":\"address\"},{\"internalType\":\"uint256\",\"name\":\"value\",\"type\":\"uint256\"}],\"name\":\"transferFrom\",\"outputs\":[{\"internalType\":\"bool\",\"name\":\"\",\"type\":\"bool\"}],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"newOwner\",\"type\":\"address\"}],\"name\":\"transferOwnership\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"}]"
+    }
+  },
+  "content": {
+    "type": "md",
+    "data": "# SIMPLE GRANT AGREEMENT\n\n**BETWEEN GRANTOR:**\n\n<u>${variables.grantorName}</u> (\"Grantor\")\n\n<u>${variables.grantorEthAddress}</u> (\"Grantor Address\")\n\n**AND RECIPIENT:**\n\n<u>${variables.recipientName}</u> (\"Recipient\")\n\n<u>${variables.recipientEthAddress}</u> (\"Recipient Address\")\n\n**EFFECTIVE DATE:**\n\n<u>${variables.effectiveDate}</u> (\"Effective Date\")\n\n## 1. INTRODUCTION\n\nThis Simple Grant Agreement (the \"Grant Agreement\") is entered into by and between the Grantor and the Recipient (collectively referred to as the \"Parties\").\n\nThe purpose of this Grant Agreement is to identify the roles and responsibilities of each Party.\n\n## 2. SCOPE OF WORK\n\n<u>${variables.scope}</u>\n(\"Scope\")\n\n## 3. RESPONSIBILITIES\n   - The Recipient will carry out the activities outlined in the Scope.\n   - The Grantor may provide reasonable guidance or feedback during the course of the engagement.\n   - The Recipient agrees to provide updates or deliverables as mutually agreed and to acknowledge the Grantor's contribution in public-facing communications when relevant.\n\n## 5. PAYMENT TERMS\nIn consideration of the Recipient's efforts under this Agreement, the Grantor agrees to transfer:\n100 Work Tokens (ERC-20)\n Contract address: 0x12be78ca652191616f49420dfa28214bafe9326c\n to the Recipient's Ethereum address listed above.\nThe token transfer shall occur within 10 business days following the Effective Date, unless otherwise agreed in writing by the Parties.\nNo fiat or additional consideration is provided under this Agreement.\n\n## 6. TERM AND TERMINATION\n\n6.1 This Grant Agreement shall become effective on the Effective Date and shall remain in effect for a period of ${variables.termDuration} unless terminated earlier.\n\n6.2 Either Party may terminate this Grant by providing written notice to the other Party.\n\n6.3 Termination of this Grant shall not affect the completion of any activities already in progress, unless otherwise agreed by the Parties.\n\n## 7. CONFIDENTIALITY\n\n7.1 During the course of this agreement, the Parties may share confidential and proprietary information with each other. Each Party agrees to maintain the confidentiality of all information designated as confidential by the disclosing Party and shall not disclose such information to any third party without the prior written consent of the disclosing Party.\n\n## 8. INTELLECTUAL PROPERTY\n\n8.1 This agreement does not transfer any intellectual property rights between the Parties.\n\n8.2 Each Party shall retain all rights, title, and interest in its own intellectual property.\n\n8.3 Any intellectual property created jointly by the Parties during the course of activities under this agreement shall be owned jointly by the Parties, with specific terms to be negotiated in good faith and documented in a separate written agreement.\n\n## 9. SIGNATURES\n\nIN WITNESS WHEREOF, the Parties have executed this Simple Grant Agreement as of the Effective Date.\n\n<u>${variables.grantorSignature}</u>\n(Grantor Signature)\n\n<u>${variables.recipientSignature}</u>\n(Recipient Signature)\n\nBy signing, I confirm that I have read, understood, and agree to be legally bound by all terms of this agreement."
+  },
+  "execution": {
+    "states": {
+      "AWAITING_TEMPLATE_VARIABLES": {
+        "name": "Awaiting Template Variables",
+        "description": "Grantor needs to fill out the template variables."
+      },
+      "AWAITING_RECIPIENT_SIGNATURE": {
+        "name": "Pending Recipient Signature",
+        "description": "This state awaits until Recipient signing the agreement."
+      },
+      "AWAITING_GRANTOR_SIGNATURE": {
+        "name": "Pending Grantor Signature",
+        "description": "This state awaits Grantor's final acceptance of Recipient's data."
+      },
+      "AWAITING_WORK_SUBMISSION": {
+        "name": "Awaiting Work Submission",
+        "description": "The agreement has been accepted by both parties. Awaiting work submission."
+      },
+      "WORK_IN_REVIEW": {
+        "name": "Work In Review",
+        "description": "The work has been submitted by recipient and is now awaiting grantor review."
+      },
+      "AWAITING_PAYMENT": {
+        "name": "Work Accepted, Awaiting Payment",
+        "description": "The work has been reviewed and accepted. Awaiting payment from grantor."
+      },
+      "WORK_ACCEPTED_AND_PAID": {
+        "name": "Grant Payment Fulfilled",
+        "description": "The work has been submitted, reviewed, and payment has been successfully sent."
+      },
+      "REJECTED": {
+        "name": "Agreement Rejected",
+        "description": "The agreement has been rejected by Grantor and will not proceed."
+      }
+    },
+    "initialize": {
+      "name": "Initialize Grant",
+      "description": "Initialize the grant with grantor and recipient addresses",
+      "initialState": "AWAITING_TEMPLATE_VARIABLES",
+      "data": {
+        "grantorEthAddress": "${variables.grantorEthAddress}",
+        "recipientEthAddress": "${variables.recipientEthAddress}"
+      }
+    },
+    "inputs": {
+      "grantorData": {
+        "type": "VerifiedCredentialEIP712",
+        "schema": "verified-credential-eip712.schema.json",
+        "displayName": "Template Variable Submission",
+        "description": "Grantor fills in terms, including scope, duration, and effective date.",
+        "data": {
+          "grantorName": "${variables.grantorName}",
+          "scope": "${variables.scope}",
+          "termDuration": "${variables.termDuration}",
+          "effectiveDate": "${variables.effectiveDate}"
+        },
+        "issuer": "${variables.grantorEthAddress.value}"
+      },
+      "recipientSigning": {
+        "type": "VerifiedCredentialEIP712",
+        "schema": "verified-credential-eip712.schema.json",
+        "displayName": "Recipient Signature",
+        "description": "Signature from Recipient accepting the grant terms.",
+        "data": {
+          "recipientName": "${variables.recipientName}",
+          "recipientSignature": "${variables.recipientSignature}"
+        },
+        "issuer": "${variables.recipientEthAddress.value}"
+      },
+      "grantorSigning": {
+        "type": "VerifiedCredentialEIP712",
+        "schema": "verified-credential-eip712.schema.json",
+        "displayName": "Grantor Signature",
+        "description": "Signature from Grantor accepting grant terms.",
+        "data": {
+          "grantorSignature": "${variables.grantorSignature}"
+        },
+        "issuer": "${variables.grantorEthAddress.value}"
+      },
+      "grantorRejection": {
+        "type": "VerifiedCredentialEIP712",
+        "schema": "verified-credential-eip712.schema.json",
+        "displayName": "Reject Signing",
+        "description": "Grantor rejects grant terms with a reason.",
+        "data": {
+          "grantorRejectionReason": {
+            "type": "string",
+            "name": "Grantor Rejection Reason",
+            "validation": {
+              "required": true
+            }
+          }
+        },
+        "issuer": "${variables.grantorEthAddress.value}"
+      },
+      "workSubmission": {
+        "type": "VerifiedCredentialEIP712",
+        "schema": "verified-credential-eip712.schema.json",
+        "displayName": "Work Submission",
+        "description": "Recipient submits completed work for review.",
+        "data": {
+          "submissionHash": {
+            "type": "string",
+            "name": "Submission Hash",
+            "description": "Hash of the work submission content",
+            "validation": {
+              "required": true
+            }
+          },
+          "submissionUrl": {
+            "type": "string",
+            "name": "Submission URL",
+            "description": "URL to access the submitted work content",
+            "validation": {
+              "required": true
+            }
+          }
+        },
+        "issuer": "${variables.recipientEthAddress.value}"
+      },
+      "workAccepted": {
+        "type": "VerifiedCredentialEIP712",
+        "schema": "verified-credential-eip712.schema.json",
+        "displayName": "Work Accepted",
+        "description": "Grantor accepts the submitted work and provides comments.",
+        "data": {
+          "acceptanceComments": {
+            "type": "string",
+            "name": "Acceptance Comments",
+            "description": "Grantor's comments on the accepted work",
+            "validation": {
+              "required": true
+            }
+          }
+        },
+        "issuer": "${variables.grantorEthAddress.value}"
+      },
+      "workResubmissionRequested": {
+        "type": "VerifiedCredentialEIP712",
+        "schema": "verified-credential-eip712.schema.json",
+        "displayName": "Work Resubmission Requested",
+        "description": "Grantor requests changes to submitted work.",
+        "data": {
+          "resubmissionReason": {
+            "type": "string",
+            "name": "Resubmission Reason",
+            "description": "Reason why work needs to be resubmitted",
+            "validation": {
+              "required": true
+            }
+          },
+          "resubmissionInstructions": {
+            "type": "string",
+            "name": "Resubmission Instructions",
+            "description": "Instructions for work resubmission",
+            "validation": {
+              "required": true
+            }
+          }
+        },
+        "issuer": "${variables.grantorEthAddress.value}"
+      },
+      "workRejected": {
+        "type": "VerifiedCredentialEIP712",
+        "schema": "verified-credential-eip712.schema.json",
+        "displayName": "Work Rejected",
+        "description": "Grantor rejects the submitted work.",
+        "data": {
+          "rejectionReason": {
+            "type": "string",
+            "name": "Rejection Reason",
+            "description": "Reason for rejecting the submitted work",
+            "validation": {
+              "required": true
+            }
+          }
+        },
+        "issuer": "${variables.grantorEthAddress.value}"
+      },
+      "workTokenSentTx": {
+        "type": "VerifiedCredentialEIP712",
+        "schema": "verified-credential-eip712.schema.json",
+        "displayName": "Work Approved and Payment Proof",
+        "description": "Grantor confirms work has been accepted and payment has been sent.",
+        "data": {
+           "workTokenSentTx": "${variables.workTokenSentTx}"
+        },
+        "issuer": "${variables.grantorEthAddress.value}"
+      }
+    },
+    "transitions": [
+      {
+        "from": "AWAITING_TEMPLATE_VARIABLES",
+        "to": "AWAITING_RECIPIENT_SIGNATURE",
+        "conditions": [
+          {
+            "type": "isValid",
+            "input": "grantorData"
+          }
+        ]
+      },
+      {
+        "from": "AWAITING_RECIPIENT_SIGNATURE",
+        "to": "AWAITING_GRANTOR_SIGNATURE",
+        "conditions": [
+          {
+            "type": "isValid",
+            "input": "recipientSigning"
+          }
+        ]
+      },
+      {
+        "from": "AWAITING_GRANTOR_SIGNATURE",
+        "to": "AWAITING_WORK_SUBMISSION",
+        "conditions": [
+          {
+            "type": "isValid",
+            "input": "grantorSigning"
+          }
+        ]
+      },
+      {
+        "from": "AWAITING_WORK_SUBMISSION",
+        "to": "WORK_IN_REVIEW",
+        "conditions": [
+          {
+            "type": "isValid",
+            "input": "workSubmission"
+          }
+        ]
+      },
+      {
+        "from": "WORK_IN_REVIEW",
+        "to": "AWAITING_PAYMENT",
+        "conditions": [
+          {
+            "type": "isValid",
+            "input": "workAccepted"
+          }
+        ]
+      },
+      {
+        "from": "WORK_IN_REVIEW",
+        "to": "AWAITING_WORK_SUBMISSION",
+        "conditions": [
+          {
+            "type": "isValid",
+            "input": "workResubmissionRequested"
+          }
+        ]
+      },
+      {
+        "from": "WORK_IN_REVIEW",
+        "to": "AWAITING_WORK_SUBMISSION",
+        "conditions": [
+          {
+            "type": "isValid",
+            "input": "workRejected"
+          }
+        ]
+      },
+      {
+        "from": "AWAITING_PAYMENT",
+        "to": "WORK_ACCEPTED_AND_PAID",
+        "conditions": [
+          {
+            "type": "isValid",
+            "input": "workTokenSentTx"
+          }
+        ]
+      },
+      {
+        "from": "AWAITING_GRANTOR_SIGNATURE",
+        "to": "REJECTED",
+        "conditions": [
+          {
+            "type": "isValid",
+            "input": "grantorRejection"
+          }
+        ]
+      }
+    ]
+  }
+}

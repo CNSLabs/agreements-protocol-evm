@@ -1,0 +1,8 @@
+{
+  "inputId": "signManifesto",
+  "type": "signedFields", 
+  "values": {
+    "signerName": "Bob Smith",
+    "signerAddress": "0xBe32388C134a952cdBCc5673E93d46FfD8b85065"
+  }
+} 

@@ -1,0 +1,10 @@
+{
+  "inputId": "templateVariables",
+  "type": "signedFields",
+  "values": {
+    "scope": "Delivery of 100 widgets",
+    "termDuration": "30 days",
+    "effectiveDate": "2024-03-20T12:00:00Z"
+  }
+}
+

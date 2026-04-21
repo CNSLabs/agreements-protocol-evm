@@ -1,0 +1,7 @@
+{
+  "inputId": "workAccepted",
+  "type": "signedFields",
+  "values": {
+    "acceptanceComments": "Great job, the work meets all requirements!"
+  }
+} 

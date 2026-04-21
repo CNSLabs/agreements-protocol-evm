@@ -1,0 +1,8 @@
+{
+  "inputId": "m2RejectSubmission",
+  "type": "signedFields",
+  "values": {
+    "feedback": "Month 2 submission incomplete. Feature X tests are insufficient and community engagement metrics are not documented.",
+    "isApproved": false
+  }
+}

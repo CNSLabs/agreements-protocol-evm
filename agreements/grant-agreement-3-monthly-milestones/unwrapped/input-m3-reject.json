@@ -1,0 +1,8 @@
+{
+  "inputId": "m3RejectSubmission",
+  "type": "signedFields",
+  "values": {
+    "feedback": "Month 3 submission needs revision. Performance benchmarks need to be more comprehensive and code review comments need to be addressed.",
+    "isApproved": false
+  }
+}

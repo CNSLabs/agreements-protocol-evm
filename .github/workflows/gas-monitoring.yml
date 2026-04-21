@@ -1,0 +1,302 @@
+name: Gas Monitoring
+
+on:
+  workflow_dispatch:  # Allow manual triggering
+  pull_request:
+    paths:
+      - 'contracts/src/**'
+      - 'contracts/test/**'
+      - 'contracts/scripts/**'
+      - 'contracts/hardhat.config.ts'
+  push:
+    branches:
+      - main
+      - develop
+
+jobs:
+  gas-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Compile contracts (generates artifacts needed by SDK)
+        run: npm run compile
+        working-directory: contracts
+
+      - name: Build SDK (required for tests)
+        run: npm run sdk:build
+
+      - name: Generate base branch gas report
+        if: github.event_name == 'pull_request'
+        run: |
+          set -euo pipefail
+          BASE_REF="${{ github.base_ref }}"
+          BASE_DIR="/tmp/gas-base"
+
+          git fetch origin "${BASE_REF}" --depth=1
+          git worktree add "${BASE_DIR}" "origin/${BASE_REF}"
+
+          pushd "${BASE_DIR}" >/dev/null
+          if [ -f .gitmodules ]; then
+            git submodule sync --recursive
+            git submodule update --init --recursive
+          fi
+          npm ci
+          npm --prefix contracts run compile
+          npm run sdk:build
+          npm --prefix contracts run test
+          cp contracts/gas-report.txt "${GITHUB_WORKSPACE}/contracts/gas-report-base.txt"
+          find contracts/test -type f -name '*.ts' | sort | sed 's#^contracts/##' > "${GITHUB_WORKSPACE}/contracts/base-test-files.txt"
+          popd >/dev/null
+
+          git worktree remove "${BASE_DIR}" --force
+      
+      - name: Run tests and generate gas report
+        working-directory: contracts
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ] && [ -f "base-test-files.txt" ]; then
+            mapfile -t BASE_TEST_FILES < <(grep -v '^[[:space:]]*$' base-test-files.txt)
+            MATCHED_TESTS=()
+            for test_file in "${BASE_TEST_FILES[@]}"; do
+              if [ -f "${test_file}" ]; then
+                MATCHED_TESTS+=("${test_file}")
+              fi
+            done
+
+            if [ "${#MATCHED_TESTS[@]}" -gt 0 ]; then
+              echo "Running gas comparison against ${#MATCHED_TESTS[@]} base-branch test files."
+              npm run test -- "${MATCHED_TESTS[@]}"
+            else
+              echo "No base-branch test files found on PR branch; running full suite."
+              npm run test
+            fi
+
+            cp gas-report.txt gas-report-comparison.txt
+          else
+            npm run test
+          fi
+
+      - name: Check gas thresholds
+        working-directory: contracts
+        run: npm run gas:check
+        continue-on-error: true
+
+      - name: Upload gas report
+        uses: actions/upload-artifact@v4
+        with:
+          name: gas-report
+          path: contracts/gas-report.txt
+
+      - name: Comment PR with gas report
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const { execSync } = require('child_process');
+            
+            try {
+              const marker = '<!-- gas-report-comment -->';
+              const currentReportPath = fs.existsSync('contracts/gas-report-comparison.txt')
+                ? 'contracts/gas-report-comparison.txt'
+                : 'contracts/gas-report.txt';
+              const currentReport = fs.readFileSync(currentReportPath, 'utf-8');
+              const baseRef = process.env.GITHUB_BASE_REF;
+
+              function parseGasReport(report) {
+                const methods = new Map();
+                const deployments = new Map();
+                const parseNum = (value) => {
+                  const cleaned = String(value || '').replace(/[^\d-]/g, '');
+                  if (!cleaned || cleaned === '-') return null;
+                  const parsed = Number.parseInt(cleaned, 10);
+                  return Number.isFinite(parsed) ? parsed : null;
+                };
+
+                const methodRegexes = [
+                  /\|\s+([A-Za-z0-9_]+)\s+[·⋅∙]\s+([A-Za-z0-9_]+)\s+[·⋅∙]\s+([\d-]+)\s+[·⋅∙]\s+([\d-]+)\s+[·⋅∙]\s+([\d-]+)\s+[·⋅∙]\s+([\d-]+)\s+[·⋅∙]/g,
+                  /\|\s*([A-Za-z0-9_]+)\s*\|\s*([A-Za-z0-9_]+)\s*\|\s*([\d-]+)\s*\|\s*([\d-]+)\s*\|\s*([\d-]+)\s*\|\s*([\d-]+)\s*\|/g,
+                ];
+
+                for (const regex of methodRegexes) {
+                  for (const match of report.matchAll(regex)) {
+                    const contract = match[1];
+                    const method = match[2];
+                    if (method === '-' || method === 'Method') continue;
+
+                    const min = parseNum(match[3]);
+                    const max = parseNum(match[4]);
+                    const avg = parseNum(match[5]);
+                    const calls = parseNum(match[6]);
+                    if (avg === null) continue;
+
+                    methods.set(`${contract}.${method}`, {
+                      contract,
+                      method,
+                      min,
+                      max,
+                      avg,
+                      calls,
+                    });
+                  }
+                }
+
+                const deploymentRegexes = [
+                  /\|\s+([A-Za-z0-9_]+)\s+[·⋅∙]\s+-\s+[·⋅∙]\s+-\s+[·⋅∙]\s+([\d-]+)\s+[·⋅∙]/g,
+                  /\|\s*([A-Za-z0-9_]+)\s*\|\s*-\s*\|\s*-\s*\|\s*([\d-]+)\s*\|/g,
+                ];
+
+                for (const regex of deploymentRegexes) {
+                  for (const match of report.matchAll(regex)) {
+                    const contract = match[1];
+                    if (contract === 'Deployments') continue;
+                    const avg = parseNum(match[2]);
+                    if (avg === null) continue;
+                    deployments.set(contract, { contract, avg });
+                  }
+                }
+
+                return { methods, deployments };
+              }
+
+              function formatDelta(base, current) {
+                const delta = current - base;
+                const pct = base === 0 ? 0 : (delta / base) * 100;
+                const trend = delta < 0 ? '✅ Better' : delta > 0 ? '⚠️ Worse' : '➖ Unchanged';
+                const signedDelta = `${delta > 0 ? '+' : ''}${delta.toLocaleString()}`;
+                const signedPct = `${pct > 0 ? '+' : ''}${pct.toFixed(2)}%`;
+                return { delta, trend, signedDelta, signedPct };
+              }
+
+              let baseReport = null;
+              if (fs.existsSync('contracts/gas-report-base.txt')) {
+                baseReport = fs.readFileSync('contracts/gas-report-base.txt', 'utf-8');
+              } else if (baseRef) {
+                try {
+                  execSync(`git fetch origin ${baseRef} --depth=1`, { stdio: 'ignore' });
+                  baseReport = execSync(`git show origin/${baseRef}:contracts/gas-report.txt`, {
+                    encoding: 'utf8',
+                    stdio: ['ignore', 'pipe', 'ignore'],
+                  });
+                } catch {
+                  baseReport = null;
+                }
+              }
+
+              const current = parseGasReport(currentReport);
+              const hasBase = !!baseReport;
+              const base = hasBase ? parseGasReport(baseReport) : { methods: new Map(), deployments: new Map() };
+
+              const methodRows = [];
+              let improvedMethods = 0;
+              let regressedMethods = 0;
+
+              for (const [key, currEntry] of current.methods.entries()) {
+                const baseEntry = base.methods.get(key);
+                if (!baseEntry) {
+                  methodRows.push(`| \`${key}\` | n/a | ${currEntry.avg.toLocaleString()} | n/a | n/a | 🆕 New |`);
+                  continue;
+                }
+
+                const d = formatDelta(baseEntry.avg, currEntry.avg);
+                if (d.delta < 0) improvedMethods += 1;
+                if (d.delta > 0) regressedMethods += 1;
+
+                methodRows.push(
+                  `| \`${key}\` | ${baseEntry.avg.toLocaleString()} | ${currEntry.avg.toLocaleString()} | ${d.signedDelta} | ${d.signedPct} | ${d.trend} |`
+                );
+              }
+
+              methodRows.sort((a, b) => a.localeCompare(b));
+
+              const deploymentRows = [];
+              for (const [key, currEntry] of current.deployments.entries()) {
+                const baseEntry = base.deployments.get(key);
+                if (!baseEntry) {
+                  deploymentRows.push(`| \`${key}\` | n/a | ${currEntry.avg.toLocaleString()} | n/a | n/a | 🆕 New |`);
+                  continue;
+                }
+
+                const d = formatDelta(baseEntry.avg, currEntry.avg);
+                deploymentRows.push(
+                  `| \`${key}\` | ${baseEntry.avg.toLocaleString()} | ${currEntry.avg.toLocaleString()} | ${d.signedDelta} | ${d.signedPct} | ${d.trend} |`
+                );
+              }
+
+              deploymentRows.sort((a, b) => a.localeCompare(b));
+
+              let comment = `${marker}\n## 📊 Gas Report`;
+              if (hasBase && baseRef) {
+                comment += ` (vs \`${baseRef}\`)`;
+              }
+              comment += '\n\n';
+              comment += `Parsed rows: ${current.methods.size} methods, ${current.deployments.size} deployments.`;
+              if (hasBase) {
+                comment += ` Baseline parsed: ${base.methods.size} methods, ${base.deployments.size} deployments.`;
+              }
+              comment += '\n\n';
+              if (hasBase && currentReportPath.endsWith('gas-report-comparison.txt')) {
+                comment += '_Comparison uses only base-branch test files (PR-only tests excluded)._\n\n';
+              }
+
+              if (hasBase) {
+                comment += `**Method avg summary:** ${improvedMethods} better, ${regressedMethods} worse.\n\n`;
+                comment += '| Method | Base Avg | PR Avg | Δ Gas | Δ % | Trend |\n';
+                comment += '|---|---:|---:|---:|---:|---|\n';
+                comment += methodRows.length > 0
+                  ? `${methodRows.join('\n')}\n\n`
+                  : '| _No method rows parsed_ | | | | | |\n\n';
+
+                comment += '| Deployment | Base Avg | PR Avg | Δ Gas | Δ % | Trend |\n';
+                comment += '|---|---:|---:|---:|---:|---|\n';
+                comment += deploymentRows.length > 0
+                  ? `${deploymentRows.join('\n')}\n\n`
+                  : '| _No deployment rows parsed_ | | | | | |\n\n';
+              } else {
+                comment += '_Baseline gas report not found on base branch; showing current report only._\n\n';
+              }
+
+              comment += '<details><summary>Current Full Gas Report</summary>\n\n```\n';
+              comment += currentReport;
+              comment += '\n```\n</details>';
+
+              const comments = await github.paginate(github.rest.issues.listComments, {
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                per_page: 100,
+              });
+
+              const existing = comments.find(
+                (c) => c.user?.type === 'Bot' && c.body && c.body.includes(marker)
+              );
+
+              if (existing) {
+                await github.rest.issues.updateComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  comment_id: existing.id,
+                  body: comment,
+                });
+              } else {
+                await github.rest.issues.createComment({
+                  issue_number: context.issue.number,
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  body: comment
+                });
+              }
+            } catch (error) {
+              console.log('Could not post gas report comment:', error.message);
+            }

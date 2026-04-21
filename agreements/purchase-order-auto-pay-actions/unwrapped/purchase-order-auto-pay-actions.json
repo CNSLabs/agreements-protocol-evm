@@ -1,0 +1,222 @@
+{
+  "metadata": {
+    "id": "did:example:purchase-order-auto-pay-actions-v1",
+    "templateId": "did:template:purchase-order-auto-pay-actions-v1",
+    "version": "1.0.0",
+    "createdAt": "2024-03-20T12:00:00Z",
+    "name": "Purchase Order (Auto Pay via Actions)",
+    "author": "Agreements Protocol",
+    "description": "Purchase order where payer signs first, then payee signs. Payment is executed as an on-chain action on the final signature transition."
+  },
+  "variables": {
+    "payerEthAddress": {
+      "type": "address",
+      "name": "Payer Address",
+      "description": "Ethereum address of the paying party",
+      "validation": { "required": true }
+    },
+    "payeeEthAddress": {
+      "type": "address",
+      "name": "Payee Address",
+      "description": "Ethereum address of the receiving party",
+      "validation": { "required": true }
+    },
+    "workTokenAddress": {
+      "type": "address",
+      "name": "Payment Token (ERC-20) Address",
+      "description": "ERC-20 token contract used for payment",
+      "validation": { "required": true }
+    },
+    "paymentAmount": {
+      "type": "uint256",
+      "name": "Payment Amount",
+      "description": "Amount of tokens to transfer upon final signature",
+      "validation": { "required": true, "min": 1 }
+    },
+    "payerName": {
+      "type": "string",
+      "name": "Payer Name",
+      "description": "Legal name of the paying party",
+      "validation": { "required": true, "minLength": 1 }
+    },
+    "payerSignature": {
+      "type": "signature",
+      "name": "Payer Signature",
+      "description": "Digital signature of the payer",
+      "validation": { "required": true }
+    },
+    "payeeName": {
+      "type": "string",
+      "name": "Payee Name",
+      "description": "Legal name of the receiving party",
+      "validation": { "required": true, "minLength": 1 }
+    },
+    "payeeSignature": {
+      "type": "signature",
+      "name": "Payee Signature",
+      "description": "Digital signature of the payee",
+      "validation": { "required": true }
+    },
+    "effectiveDate": {
+      "type": "dateTime",
+      "name": "Effective Date",
+      "description": "The date when this purchase order becomes effective",
+      "validation": { "required": true }
+    },
+    "scope": {
+      "type": "string",
+      "name": "Scope",
+      "description": "The scope of cooperation between the parties",
+      "validation": { "required": true }
+    },
+    "termDuration": {
+      "type": "string",
+      "name": "Term Duration",
+      "description": "The duration of the purchase order",
+      "validation": { "required": true }
+    }
+  },
+  "content": {
+    "type": "md",
+    "data": "# PURCHASE ORDER AGREEMENT\n\n\n**THIS PURCHASE ORDER AGREEMENT** (the \"Agreement\") is made effective upon the date of the final digital signature below, by and between **${variables.payerName}** (\"Payer\") and **${variables.payeeName}** (\"Payee\").\n\n\n## 1. AGREEMENT TO TRANSACT\nThe Payer agrees to purchase, and the Payee agrees to sell, the goods or services associated with this Order. The Parties acknowledge that this Agreement represents a binding commitment to transact based on the terms set forth herein.\n\n\n## 2. PAYMENT TERMS AND MECHANISM\n**2.1 Purchase Price.** The total consideration for this Order is **${variables.paymentAmount}** denominated in **${variables.workTokenAddress}** (the \"Purchase Price\").\n\n\n**2.2 Immediate Payment via TransferFrom.** This Order constitutes a prepaid transaction.\n* (a) **Authorization:** The Payer represents and warrants that they have approved the Protocol's Smart Contract to spend an amount of **${variables.workTokenAddress}** equal to or greater than the Purchase Price from the Payer's wallet.\n* (b) **Execution and Transfer:** Upon the valid execution of this Agreement by both Parties, the Protocol is irrevocably instructed to execute a `transferFrom` transaction, moving the full Purchase Price directly from the Payer’s wallet to the Payee’s wallet.\n* (c) **No Escrow:** The Parties acknowledge that funds are transferred immediately upon signing and are not held in escrow or subject to further release conditions by the Protocol.\n\n\n## 3. DELIVERY OBLIGATIONS\n**3.1 Delivery.** Upon receipt of the Purchase Price, the Payee is obligated to provide the goods or services as agreed between the Parties.\n\n\n**3.2 Non-Delivery.** Failure to deliver the agreed goods or services after the receipt of the Purchase Price constitutes a material breach of this Agreement, entitling the Payer to seek a full refund and all available legal remedies.\n\n\n## 4. REPRESENTATIONS AND WARRANTIES\n**4.1** Each Party represents that it has the legal authority and capacity to enter into this Agreement.\n**4.2** The Payer warrants that the funds used for the Purchase Price are not derived from illegal activities.\n**4.3** The Payee warrants that they are the legal owner or authorized provider of the goods or services being sold.\n\n\n## 5. GENERAL PROVISIONS\n**5.1 Electronic Acceptance.** The Parties agree that their cryptographic signatures recorded on the blockchain constitute valid and binding acceptance of this Agreement.\n**5.2 Governing Law.** This Agreement shall be governed by the laws applicable to the Payer's jurisdiction unless otherwise specified in a separate master agreement.\n\n\n**IN WITNESS WHEREOF**, the Parties have executed this Agreement by their cryptographic signatures."
+  },
+  "execution": {
+    "states": {
+      "PENDING_TEMPLATE_VARIABLES": {
+        "name": "Pending Template Variables",
+        "description": "Payer needs to fill out the template variables."
+      },
+      "PENDING_PAYER_SIGNATURE": {
+        "name": "Pending Payer Signature",
+        "description": "Awaiting payer signature."
+      },
+      "PENDING_PAYEE_SIGNATURE": {
+        "name": "Pending Payee Signature",
+        "description": "Awaiting payee signature."
+      },
+      "AGREEMENT_TERMINATED_WITHOUT_PAYMENT": {
+        "name": "Agreement Terminated Without Payment",
+        "description": "Payee chose not to participate, so the agreement is terminated without payment."
+      },
+      "PAYMENT_COMPLETE": {
+        "name": "Payment Complete",
+        "description": "Both parties have signed and payment has been executed."
+      }
+    },
+    "initialize": {
+      "name": "Initialize Purchase Order",
+      "description": "Initialize with party addresses and payment parameters",
+      "initialState": "PENDING_TEMPLATE_VARIABLES",
+      "data": {
+        "payerEthAddress": "${variables.payerEthAddress}",
+        "payerName": "${variables.payerName}",
+        "payeeEthAddress": "${variables.payeeEthAddress}",
+        "payeeName": "${variables.payeeName}",
+        "workTokenAddress": "${variables.workTokenAddress}",
+        "paymentAmount": "${variables.paymentAmount}"
+      }
+    },
+    "inputs": {
+      "templateVariables": {
+        "type": "VerifiedCredentialEIP712",
+        "schema": "verified-credential-eip712.schema.json",
+        "displayName": "Template Variable Submission",
+        "description": "Payer fills in terms, including scope, duration, and effective date.",
+        "data": {
+          "scope": "${variables.scope}",
+          "termDuration": "${variables.termDuration}",
+          "effectiveDate": "${variables.effectiveDate}"
+        },
+        "issuer": "${variables.payerEthAddress.value}"
+      },
+      "payerSigning": {
+        "type": "VerifiedCredentialEIP712",
+        "schema": "verified-credential-eip712.schema.json",
+        "displayName": "Payer Signature",
+        "description": "Signature from payer accepting the purchase order terms.",
+        "data": {
+          "payerSignature": "${variables.payerSignature}"
+        },
+        "issuer": "${variables.payerEthAddress.value}"
+      },
+      "payeeSigning": {
+        "type": "VerifiedCredentialEIP712",
+        "schema": "verified-credential-eip712.schema.json",
+        "displayName": "Payee Signature",
+        "description": "Signature from payee accepting the purchase order terms.",
+        "data": {
+          "payeeSignature": "${variables.payeeSignature}"
+        },
+        "issuer": "${variables.payeeEthAddress.value}"
+      },
+      "payeeRejection": {
+        "type": "VerifiedCredentialEIP712",
+        "schema": "verified-credential-eip712.schema.json",
+        "displayName": "Payee Rejection",
+        "description": "Payee declines to participate in the purchase order.",
+        "data": {
+          "payeeRejectionReason": {
+            "type": "string",
+            "name": "Rejection Reason",
+            "description": "Reason why the payee is declining to participate",
+            "validation": { "required": true }
+          }
+        },
+        "issuer": "${variables.payeeEthAddress.value}"
+      }
+    },
+    "actions": [
+      {
+        "id": "payOnPayeeSignature",
+        "when": { "from": "PENDING_PAYEE_SIGNATURE", "input": "payeeSigning" },
+        "call": {
+          "type": "evmCall",
+          "target": "${variables.workTokenAddress.value}",
+          "value": "0",
+          "abi": [
+            {
+              "type": "function",
+              "name": "transferFrom",
+              "stateMutability": "nonpayable",
+              "inputs": [
+                { "name": "from", "type": "address" },
+                { "name": "to", "type": "address" },
+                { "name": "value", "type": "uint256" }
+              ],
+              "outputs": [{ "name": "", "type": "bool" }]
+            }
+          ],
+          "method": "transferFrom",
+          "args": [
+            "${variables.payerEthAddress.value}",
+            "${variables.payeeEthAddress.value}",
+            "${variables.paymentAmount.value}"
+          ]
+        },
+        "revertOnFailure": true
+      }
+    ],
+    "transitions": [
+      {
+        "from": "PENDING_TEMPLATE_VARIABLES",
+        "to": "PENDING_PAYER_SIGNATURE",
+        "conditions": [{ "type": "isValid", "input": "templateVariables" }]
+      },
+      {
+        "from": "PENDING_PAYER_SIGNATURE",
+        "to": "PENDING_PAYEE_SIGNATURE",
+        "conditions": [{ "type": "isValid", "input": "payerSigning" }]
+      },
+      {
+        "from": "PENDING_PAYEE_SIGNATURE",
+        "to": "PAYMENT_COMPLETE",
+        "conditions": [{ "type": "isValid", "input": "payeeSigning" }]
+      },
+      {
+        "from": "PENDING_PAYEE_SIGNATURE",
+        "to": "AGREEMENT_TERMINATED_WITHOUT_PAYMENT",
+        "conditions": [{ "type": "isValid", "input": "payeeRejection" }]
+      }
+    ]
+  }
+}

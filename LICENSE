@@ -1,0 +1,9 @@
+Copyright 2026 CNS Labs Inc.
+
+This repository is split-licensed.
+
+- `contracts/src/**` is licensed under `BUSL-1.1`
+- `sdk/**` is licensed under `Apache-2.0`
+- `contracts/test/**`, `contracts/scripts/**`, `agreements/**`, `.github/**`, `MAPPING.md`, and repository documentation are licensed under `Apache-2.0`
+
+See `LICENSING.md` for path-level details and `BUSL-1.1` parameters used by this repository.

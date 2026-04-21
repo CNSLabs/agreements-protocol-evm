@@ -1,0 +1,8 @@
+{
+  "inputId": "m1ApproveSubmission",
+  "type": "signedFields",
+  "values": {
+    "feedback": "Great work on Month 1 KPIs! All objectives met. PRs are well-documented and documentation improvements are excellent.",
+    "isApproved": true
+  }
+}

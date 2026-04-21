@@ -1,0 +1,8 @@
+{
+  "inputId": "payeeRejection",
+  "type": "signedFields",
+  "values": {
+    "payeeRejectionReason": "Unable to fulfill the order on requested timeline."
+  }
+}
+

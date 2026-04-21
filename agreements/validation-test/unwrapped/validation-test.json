@@ -1,0 +1,152 @@
+{
+  "metadata": {
+    "id": "did:example:validation-test-v1",
+    "templateId": "did:template:validation-test-v1",
+    "version": "1.0.0",
+    "createdAt": "2024-03-20T12:00:00Z",
+    "name": "Validation Test Agreement",
+    "author": "Agreements Protocol",
+    "description": "Test agreement for validating all condition types"
+  },
+  "variables": {
+    "uintMin": {
+      "type": "uint256",
+      "name": "Uint with Min",
+      "description": "Uint256 variable with min validation",
+      "validation": {
+        "required": true,
+        "min": 10
+      }
+    },
+    "uintMax": {
+      "type": "uint256",
+      "name": "Uint with Max",
+      "description": "Uint256 variable with max validation",
+      "validation": {
+        "required": true,
+        "max": 100
+      }
+    },
+    "uintMinMax": {
+      "type": "uint256",
+      "name": "Uint with Min and Max",
+      "description": "Uint256 variable with both min and max validation",
+      "validation": {
+        "required": true,
+        "min": 20,
+        "max": 80
+      }
+    },
+    "stringMinLength": {
+      "type": "string",
+      "name": "String with MinLength",
+      "description": "String variable with minLength validation",
+      "validation": {
+        "required": true,
+        "minLength": 5
+      }
+    },
+    "stringMaxLength": {
+      "type": "string",
+      "name": "String with MaxLength",
+      "description": "String variable with maxLength validation",
+      "validation": {
+        "required": true,
+        "maxLength": 20
+      }
+    },
+    "stringMinMaxLength": {
+      "type": "string",
+      "name": "String with MinLength and MaxLength",
+      "description": "String variable with both minLength and maxLength validation",
+      "validation": {
+        "required": true,
+        "minLength": 3,
+        "maxLength": 10
+      }
+    },
+    "optionalComment": {
+      "type": "string",
+      "name": "Optional Comment",
+      "description": "Optional string that still gets length validation when provided",
+      "validation": {
+        "required": false,
+        "minLength": 5
+      }
+    },
+    "optionalScore": {
+      "type": "uint256",
+      "name": "Optional Score",
+      "description": "Optional uint that still gets numeric validation when provided",
+      "validation": {
+        "required": false,
+        "min": 10,
+        "max": 20
+      }
+    },
+    "testAddress": {
+      "type": "address",
+      "name": "Test Address",
+      "description": "Address for issuer validation",
+      "validation": {
+        "required": true
+      }
+    }
+  },
+  "content": {
+    "type": "md",
+    "data": "# Validation Test Agreement\n\nThis agreement tests all validation conditions.\n\n- Uint with min: ${variables.uintMin}\n- Uint with max: ${variables.uintMax}\n- Uint with min and max: ${variables.uintMinMax}\n- String with minLength: ${variables.stringMinLength}\n- String with maxLength: ${variables.stringMaxLength}\n- String with minLength and maxLength: ${variables.stringMinMaxLength}"
+  },
+  "execution": {
+    "states": {
+      "INITIAL": {
+        "name": "Initial State",
+        "description": "Initial state"
+      },
+      "VALIDATED": {
+        "name": "Validated State",
+        "description": "State after validation passes"
+      }
+    },
+    "initialize": {
+      "name": "Initialize",
+      "description": "Initialize the agreement",
+      "initialState": "INITIAL",
+      "data": {
+        "testAddress": "${variables.testAddress}"
+      }
+    },
+    "inputs": {
+      "submitValidation": {
+        "type": "VerifiedCredentialEIP712",
+        "schema": "verified-credential-eip712.schema.json",
+        "displayName": "Submit Validation",
+        "description": "Submit all validation fields",
+        "data": {
+          "uintMin": "${variables.uintMin}",
+          "uintMax": "${variables.uintMax}",
+          "uintMinMax": "${variables.uintMinMax}",
+          "stringMinLength": "${variables.stringMinLength}",
+          "stringMaxLength": "${variables.stringMaxLength}",
+          "stringMinMaxLength": "${variables.stringMinMaxLength}",
+          "optionalComment": "${variables.optionalComment}",
+          "optionalScore": "${variables.optionalScore}"
+        },
+        "issuer": "${variables.testAddress.value}"
+      }
+    },
+    "transitions": [
+      {
+        "from": "INITIAL",
+        "to": "VALIDATED",
+        "conditions": [
+          {
+            "type": "isValid",
+            "input": "submitValidation"
+          }
+        ]
+      }
+    ]
+  }
+}
+

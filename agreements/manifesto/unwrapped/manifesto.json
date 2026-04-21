@@ -1,0 +1,126 @@
+{
+  "metadata": {
+    "id": "did:example:mou-v1",
+    "templateId": "did:template:mou-v1",
+    "version": "1.0.0",
+    "createdAt": "2024-03-20T12:00:00Z",
+    "name": "Memorandum of Understanding",
+    "author": "Agreements Protocol",
+    "description": "Template for non-binding memorandum of understanding between two parties"
+  },
+  "variables": {
+    "controller": {
+      "type": "address",
+      "name": "Manifesto Controller",
+      "description": "Ethereum address of the manifesto controller",
+      "validation": {
+        "required": true
+      }
+    },
+    "signerName": {
+      "type": "string",
+      "name": "Signer Name",
+      "description": "Name of the person signing the manifesto",
+      "validation": {
+        "required": true,
+        "minLength": 1
+      }
+    },
+    "signerAddress": {
+      "type": "address",
+      "name": "Signer Address", 
+      "description": "Ethereum address of the signer",
+      "validation": {
+        "required": true
+      }
+    }
+  },
+  "content": {
+    "type": "md",
+    "data": "# The Consensys Network State Manifesto\n\nThe modern nation-state is a legacy system incapable of navigating the complexities of our hyper-connected, technologically-transformed, post-globalized world. Institutions that once promised to serve humanity now concentrate power and wealth, betraying their foundational purpose.\n\nTo move forward, we must unlearn the paradigms of the past and reimagine how we coordinate, govern, and create. The rise of network states, rooted not in geography but in shared values and digital sovereignty, signals the dawn of a new societal substrate, a world where communities self-organize beyond borders, united by principles rather than proximity.\n\nThe Consensys Network State is a continuation of Ethereum’s founding vision: a decentralized, open, and permissionless system that empowers individuals and collectives to operate beyond the nation-state. We are not an island, we are part of a broader constellation of value-driven communities aligned around autonomy, agency, and shared purpose.\n\nCitizens of the Consensys Network State are not defined by passports, borders, or bloodlines. We are linked by a culture of interconnectedness, plurality, and digital self-sovereignty. We recognize all people, human and non-human, as deserving of dignity, privacy, and the right to self-determination.\n\nWe reject the arbitrary divisions of legacy systems. In their place, we cultivate a future where people and communities define their own identities, govern their own affairs, and co-create institutions that reflect their values. Local sovereignty becomes a strength, not a boundary. Local communities support each other across distances and divisions, sharing knowledge, skills, and technology.\n\nAcross the network state, founders access support, mentorship, guidance and capital, mutual credit systems link informal traders in Manila with cooperatives in São Paulo. Decentralized lending protocols fund agricultural co-ops in Nairobi. Housing cooperatives in Athens coordinate with mutual aid groups in Oakland. Community crowdfunding supports regenerative manufacturing hubs in Kerala. These are not thought experiments, they are living examples of coordination without borders, trust built through code, and solidarity sustained through shared purpose.\n\nWe transcend the constraints of traditional governance by operating on a higher layer of coordination: a meta-system designed to serve its citizens transparently, efficiently, and equitably, wherever they are in the world. The network state operates on a layer above nation-states, and will steadily attract increasing amounts of the world’s capital, talent, innovation and economic activity. Ours is not a fixed territory, but a fluid, interwoven network of jurisdictions bound by consent and cooperation.\n\nWe live in the intersectioninterstice between a fading past and an emerging future. The Consensys Network State is built to navigate this liminal space, bridging legacy institutions with network-native systems. This is not an escape or exit. It is an evolution. This is not about rejecting society, it’s about supporting people through a period of deep transformation, toward new forms of coordination that honor complexity, diversity, and interdependence.\nThis is Web3’s next frontier: a global mesh of self-sovereign collectives, where coordination happens without coercion and communities thrive beyond centralized control.\n\nThe Consensys Network State is a platform for experimentation, advancing the tools, protocols, and practices that nurture resilience and autonomy through radical decentralization. We pair this decentralization with cohesion, anchored in shared values, mutual agreements, and trustless collaboration.\n\nWe live the ethos we champion: consent, transparency, and human connection. We are not waiting for the future to arrive. We are building it. Together.\nWe call on builders, dreamers, thinkers, and doers. Not as users, but as co-creators of a new societal substrate. This is more than a manifesto, it is a declaration of interdependence.\n\nJoin the movement.\n"
+  },
+  "execution": {
+    "states": {
+      "ACTIVE": {
+        "name": "Agreement is accepting signatures",
+        "description": "The manifesto accepts signatures and can be deactivated by the controller."
+      },
+      "INACTIVE": {
+        "name": "Agreement is no longer accepting signatures",
+        "description": "This state is reached when the controller deactivates the agreement and can be reactivated."
+      }
+    },
+    "initialize": {
+      "name": "Initialize",
+      "description": "Initialize the manifesto with the controller",
+      "initialState": "ACTIVE",
+      "data": {
+        "controller": "${variables.controller}"
+      }
+    },
+    "inputs": {
+      "activate": {
+        "type": "VerifiedCredentialEIP712",
+        "schema": "verified-credential-eip712.schema.json",
+        "displayName": "Reactivate",
+        "description": "Reactivate the manifesto",
+        "data": {
+          "activation": "ACTIVATE"
+        },
+        "issuer": "${variables.controller.value}"
+      },
+      "deactivate": {
+        "type": "VerifiedCredentialEIP712",
+        "schema": "verified-credential-eip712.schema.json",
+        "displayName": "Deactivate",
+        "description": "Deactivate the manifesto",
+        "data": {
+          "activation": "DEACTIVATE"
+        },
+        "issuer": "${variables.controller.value}"
+      },
+      "signManifesto": {
+        "type": "VerifiedCredentialEIP712",
+        "schema": "verified-credential-eip712.schema.json",
+        "displayName": "Sign Manifesto",
+        "description": "Sign the manifesto agreement",
+        "data": {
+          "signerName": "${variables.signerName}",
+          "signerAddress": "${variables.signerAddress}"
+        }
+      }
+    },
+    "transitions": [
+      {
+        "from": "ACTIVE",
+        "to": "INACTIVE",
+        "conditions": [
+          {
+            "type": "isValid",
+            "input": "deactivate"
+          }
+        ]
+      },
+      {
+        "from": "INACTIVE",
+        "to": "ACTIVE",
+        "conditions": [
+          {
+            "type": "isValid",
+            "input": "activate"
+          }
+        ]
+      },
+      {
+        "from": "ACTIVE",
+        "to": "ACTIVE",
+        "conditions": [
+          {
+            "type": "isValid",
+            "input": "signManifesto"
+          }
+        ]
+      }
+    ]
+  }
+}

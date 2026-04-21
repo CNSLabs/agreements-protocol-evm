@@ -1,0 +1,131 @@
+{
+  "issuer": {
+    "id": "did:pkh:eip155:1:0xBe32388C134a952cdBCc5673E93d46FfD8b85065"
+  },
+  "credentialSubject": {
+    "inputId": "recipientSigning",
+    "type": "signedFields",
+    "values": {
+      "recipientName": "Leif",
+      "recipientSignature": "0xsignature"
+    },
+    "documentHash": "0x6668dd0a5d1ca40298dff5687a5a339c15de196b6a0b1c94a59a4f6886c39916"
+  },
+  "type": [
+    "VerifiableCredential",
+    "AgreementInputCredential"
+  ],
+  "issuanceDate": "2025-06-10T15:56:28.480Z",
+  "@context": [
+    "https://www.w3.org/2018/credentials/v1"
+  ],
+  "proof": {
+    "verificationMethod": "did:pkh:eip155:1:0xBe32388C134a952cdBCc5673E93d46FfD8b85065#blockchainAccountId",
+    "created": "2025-06-10T15:56:28.480Z",
+    "proofPurpose": "assertionMethod",
+    "type": "EthereumEip712Signature2021",
+    "proofValue": "0xe5e27e8589deeb09e0453fc3e5bafea66643e7ff7f7a9e3dc7b4ee8d0ca51ba57f0764f937e913f9d703571e04149c964842447f006745a79a319233bbb9244d1c",
+    "eip712": {
+      "domain": {
+        "chainId": 1,
+        "name": "VerifiableCredential",
+        "version": "1"
+      },
+      "types": {
+        "EIP712Domain": [
+          {
+            "name": "name",
+            "type": "string"
+          },
+          {
+            "name": "version",
+            "type": "string"
+          },
+          {
+            "name": "chainId",
+            "type": "uint256"
+          }
+        ],
+        "CredentialSubject": [
+          {
+            "name": "documentHash",
+            "type": "string"
+          },
+          {
+            "name": "inputId",
+            "type": "string"
+          },
+          {
+            "name": "type",
+            "type": "string"
+          },
+          {
+            "name": "values",
+            "type": "Values"
+          }
+        ],
+        "Values": [
+          {
+            "name": "recipientName",
+            "type": "string"
+          },
+          {
+            "name": "recipientSignature",
+            "type": "string"
+          }
+        ],
+        "Issuer": [
+          {
+            "name": "id",
+            "type": "string"
+          }
+        ],
+        "Proof": [
+          {
+            "name": "created",
+            "type": "string"
+          },
+          {
+            "name": "proofPurpose",
+            "type": "string"
+          },
+          {
+            "name": "type",
+            "type": "string"
+          },
+          {
+            "name": "verificationMethod",
+            "type": "string"
+          }
+        ],
+        "VerifiableCredential": [
+          {
+            "name": "@context",
+            "type": "string[]"
+          },
+          {
+            "name": "credentialSubject",
+            "type": "CredentialSubject"
+          },
+          {
+            "name": "issuanceDate",
+            "type": "string"
+          },
+          {
+            "name": "issuer",
+            "type": "Issuer"
+          },
+          {
+            "name": "proof",
+            "type": "Proof"
+          },
+          {
+            "name": "type",
+            "type": "string[]"
+          }
+        ]
+      },
+      "primaryType": "VerifiableCredential"
+    }
+  }
+}

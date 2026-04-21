@@ -1,0 +1,8 @@
+{
+  "inputId": "payerSigning",
+  "type": "signedFields",
+  "values": {
+    "payerSignature": "0xpayer-signature"
+  }
+}
+

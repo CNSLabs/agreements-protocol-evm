@@ -1,0 +1,8 @@
+{
+  "inputId": "workSubmission",
+  "type": "signedFields",
+  "values": {
+    "submissionHash": "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+    "submissionUrl": "https://ipfs.io/ipfs/QmZ4tDuvesekSs4qM5ZBKpXiZGun7S2CYtEZRB3DYXkjGx"
+  }
+} 

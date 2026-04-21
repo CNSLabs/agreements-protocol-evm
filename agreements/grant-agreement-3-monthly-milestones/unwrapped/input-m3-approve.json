@@ -1,0 +1,8 @@
+{
+  "inputId": "m3ApproveSubmission",
+  "type": "signedFields",
+  "values": {
+    "feedback": "Outstanding work on Month 3 KPIs. Performance improvements exceeded expectations and code quality has significantly improved.",
+    "isApproved": true
+  }
+}

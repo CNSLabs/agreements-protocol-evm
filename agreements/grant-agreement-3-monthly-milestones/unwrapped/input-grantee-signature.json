@@ -1,0 +1,7 @@
+{
+  "inputId": "granteeSigning",
+  "type": "signedFields",
+  "values": {
+    "granteeSignature": "0xgrantee-signature"
+  }
+}

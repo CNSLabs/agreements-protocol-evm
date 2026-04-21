@@ -1,0 +1,46 @@
+{
+  "name": "@agreements-protocol/sdk",
+  "version": "1.0.0",
+  "description": "TypeScript SDK for the Agreements Protocol",
+  "main": "./dist/cjs/index.js",
+  "types": "./dist/esm/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/esm/index.js",
+      "require": "./dist/cjs/index.js"
+    }
+  },
+  "scripts": {
+    "build:inline-json": "node scripts/inline-json.mjs",
+    "build:esm": "tsc -p tsconfig.esm.json",
+    "build:cjs": "tsc -p tsconfig.cjs.json",
+    "build": "npm run clean && npm run build:inline-json && npm run build:esm && npm run build:cjs",
+    "lint": "tsc --noEmit",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "agreements-protocol",
+    "sdk",
+    "typescript",
+    "blockchain"
+  ],
+  "author": "",
+  "license": "Apache-2.0",
+  "devDependencies": {
+    "@types/jest": "^29.5.11",
+    "@types/minimatch": "^5.1.2",
+    "@types/node": "^20.10.6",
+    "ethers": "^6.16.0",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.1.1",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.3"
+  },
+  "dependencies": {
+    "dotenv": "^16.3.1",
+    "viem": "2.43.2"
+  }
+}

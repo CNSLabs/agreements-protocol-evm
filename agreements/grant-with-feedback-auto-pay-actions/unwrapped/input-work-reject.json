@@ -1,0 +1,7 @@
+{
+  "inputId": "workRejected",
+  "type": "signedFields",
+  "values": {
+    "rejectionReason": "The work does not meet our standards and is too far off from the requirements to be salvaged"
+  }
+} 

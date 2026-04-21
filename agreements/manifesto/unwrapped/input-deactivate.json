@@ -1,0 +1,9 @@
+{
+  "inputId": "deactivate",
+  "type": "signedFields",
+  "values": {
+    "activation": "DEACTIVATE"
+  }
+}
+
+

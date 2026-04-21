@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install all dependencies (workspaces)
+        run: npm ci
+
+      - name: Compile contracts (generates artifacts needed by SDK)
+        run: npm run compile
+        working-directory: contracts
+
+      - name: Build SDK
+        run: npm run build
+        working-directory: sdk
+
+      - name: Run lint (SDK + contracts)
+        run: npm run lint
+
+      - name: Run SDK tests
+        run: npm test
+        working-directory: sdk
+
+      - name: Run contract tests
+        run: npm test
+        working-directory: contracts
+
+  slither:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install contract dependencies
+        working-directory: contracts
+        run: npm ci
+
+      - name: Run Slither
+        uses: crytic/slither-action@v0.3.1
+        with:
+          target: contracts
+          slither-config: contracts/slither.config.json
+          slither-args: "--solc-remaps @openzeppelin/=contracts/node_modules/@openzeppelin/ --filter-paths node_modules"
+          solc-version: 0.8.24
+          fail-on: high

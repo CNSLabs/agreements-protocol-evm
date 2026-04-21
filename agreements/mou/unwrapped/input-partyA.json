@@ -1,0 +1,10 @@
+{
+  "inputId": "partyAData",
+  "type": "signedFields",
+  "values": {
+    "partyAName": "Damian",
+    "termDuration": "1 year",
+    "effectiveDate": "2025-05-20",
+    "scope": "Sample scope"
+  }
+}

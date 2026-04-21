@@ -1,0 +1,37 @@
+{
+  "name": "agreements-protocol-onchain",
+  "version": "1.0.0",
+  "description": "EVM implementation of the Agreements Protocol",
+  "private": true,
+  "workspaces": [
+    "contracts",
+    "sdk"
+  ],
+  "scripts": {
+    "contracts:compile": "cd contracts && npm run compile",
+    "contracts:lint": "cd contracts && npm run lint",
+    "contracts:test": "cd contracts && npm run test",
+    "contracts:deploy": "cd contracts && npm run deploy",
+    "sdk:build": "cd sdk && npm run build",
+    "sdk:lint": "cd sdk && npm run lint",
+    "sdk:test": "cd sdk && npm run test",
+    "contracts:slither": "cd contracts && npm run slither",
+    "lint": "npm run contracts:compile && npm run sdk:lint && npm run contracts:lint",
+    "test": "npm run contracts:compile && npm run sdk:build && npm run sdk:test && npm run contracts:test",
+    "prepare": "command -v husky >/dev/null 2>&1 && husky install || echo \"husky not installed, skipping prepare\""
+  },
+  "keywords": [
+    "blockchain",
+    "smart-contracts",
+    "agreements-protocol",
+    "ethereum"
+  ],
+  "author": "",
+  "license": "SEE LICENSE IN LICENSE",
+  "engines": {
+    "node": "20.x"
+  },
+  "devDependencies": {
+    "husky": "^9.1.7"
+  }
+}

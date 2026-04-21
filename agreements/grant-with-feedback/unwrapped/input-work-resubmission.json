@@ -1,0 +1,10 @@
+{
+  "inputId": "workResubmissionRequested",
+  "type": "signedFields",
+  "values": {
+    "resubmissionReason": "Missing unit tests",
+    "resubmissionInstructions": "Please add tests for the authentication module"
+  }
+}
+
+
