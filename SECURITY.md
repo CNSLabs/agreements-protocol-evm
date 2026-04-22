@@ -1,8 +1,12 @@
 # Security Policy
 
-Do not disclose suspected vulnerabilities in public issues or discussions.
+Do not disclose suspected vulnerabilities in public issues, pull requests, or discussions.
 
-Please report security issues privately to the maintainers through your established security contact or responsible disclosure channel.
+Report security issues privately through GitHub's private vulnerability reporting feature on the repository where this code is hosted.
+
+If private vulnerability reporting is not enabled on the repository where this code is hosted, contact the repository owner privately before any public disclosure.
+
+Please include a reasonable remediation window before disclosure.
 
 When reporting an issue, include:
 

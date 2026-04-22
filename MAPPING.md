@@ -65,12 +65,12 @@ This document highlights the **data transformations** needed to implement the ag
 
 | DFSM operation (conceptual) | EVM operation | What it does |
 |---|---|---|
-| Instantiate execution model at initial state | `AgreementEngine.initialize(...)` (via factory) | Stores `docUri/docHash`, sets `currentState`, stores input defs/transitions/init vars/actions. |
+| Instantiate execution model at initial state | `AgreementEngine.initialize(...)` (via factory) | Stores `docUri/docHash`, sets `currentState`, stores input defs/transitions/init vars/verifiers/actions. |
 | Provide an input, evaluate conditions, transition | `submitInput(inputId, payload)` | Decode/validate/persist/condition-check/verify, apply `(currentState,inputId)->toState`, run action atomically. |
 | Relayed submission on behalf of signer | `submitInputWithPermit(...)` | Same as `submitInput` but signer is authenticated by permit; sender conditions check signer. |
 | Validate “issuer” of an input | `Op.SENDER_EQ_VAR_ADDRESS` for one address-var ref, or `Op.SENDER_IN_ALLOWED_ADDRESSES` for a list of address-var refs and/or literal addresses (both compiled from `inputDef.issuer`) | Enforces tx sender (or permit signer) matches one allowed address. |
 | Add richer validity checks | verifier registry + `InputDef.verifierKeys[]` + `IInputVerifier.verify(...)` | Extension point for VC/proof verification etc. |
-| Execute side effects on transition | `ActionInit[]` at init or `registerAction(...)` | Atomic “do X” alongside the transition (e.g., token transfer). |
+| Execute side effects on transition | `ActionInit[]` at initialization | Atomic “do X” alongside the transition (e.g., token transfer). |
 
 ### Condition language mapping (what’s supported on-chain)
 
@@ -87,7 +87,7 @@ This matrix enumerates DFSM surface area and shows what is:
 
 - **On-chain**: represented/enforced directly by `AgreementEngine`/`AgreementFactory`
 - **Off-chain**: kept in `docUri` content / client logic
-- **Delegated**: enforced by **verifiers** (`IInputVerifier`) and/or **actions** (`ActionInit` / `registerAction`)
+- **Delegated**: enforced by **verifiers** (`IInputVerifier`) and/or **actions** (`ActionInit`)
 
 | DFSM field / concept | On-chain coverage | Off-chain coverage | Delegated coverage (verifiers/actions) | Notes |
 |---|---|---|---|---|
@@ -100,5 +100,4 @@ This matrix enumerates DFSM surface area and shows what is:
 | `transitions` (from/to/input linkage) | Stored as `Transition[]` (`bytes32 fromState,toState,inputId`) and enforced by `_findTransition` | Full DFSM doc remains at `docUri` | N/A | EVM transition function is deterministic: one `(state,input)` maps to one next state, or revert. |
 | `transitions[*].conditions` (e.g., `isValid(input)`) | Realized as `Condition[]` inside `InputDef` plus `_validateConditions` | “isValid” semantics as defined by the standard remain off-chain | Verifier(s) can implement “isValid VC” (including signature checks) | EVM replaces semantic `isValid` with a fixed predicate DSL + hooks. |
 | Validation rules on variables/fields (min/max, etc.) | Partially compiled into `Condition(Op, fieldId, bytesArg)` and/or `required` flag | Unsupported validations (regex/pattern/step) must be handled off-chain | Verifier can enforce unsupported validations | This is the biggest “expressivity gap” between standard validation and on-chain enforcement. |
-| Side effects associated with transitions | Supported via `ActionInit[]` / `registerAction` and executed atomically with the transition | Any non-EVM side effects are off-chain | Actions are the on-chain side-effect mechanism | This is an EVM opinion not inherent to DFSM: “transition-triggered call”. |
-
+| Side effects associated with transitions | Supported via `ActionInit[]` at initialization and executed atomically with the transition | Any non-EVM side effects are off-chain | Actions are the on-chain side-effect mechanism | This is an EVM opinion not inherent to DFSM: “transition-triggered call”. |

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Gas threshold checker - fails if gas costs exceed defined limits
  * Usage: npx hardhat run scripts/check-gas-thresholds.ts

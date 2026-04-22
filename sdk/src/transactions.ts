@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 import {
   type Abi,
   type ContractFunctionName,
@@ -52,6 +54,5 @@ export async function readContractResult<
 ): Promise<TResult> {
   return client.readContract(params as any) as Promise<TResult>;
 }
-
 
 

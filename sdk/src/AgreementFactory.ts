@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 import {
   type Abi,
   type Hex,
@@ -11,7 +13,7 @@ import {
   stringToHex,
 } from 'viem';
 import { readContractResult } from "./transactions.js";
-import { AgreementJson, FactoryConfig, InputDef, Transition, DataField, ActionInit } from "./types.js";
+import { AgreementJson, FactoryConfig, InputDef, Transition, DataField, VerifierInit, ActionInit } from "./types.js";
 import { transformAgreementToOnChainParams, InitValue } from "./transformer.js";
 import { AgreementFactoryABI } from "./generated/AgreementFactoryAbi.js";
 
@@ -20,12 +22,13 @@ import { AgreementFactoryABI } from "./generated/AgreementFactoryAbi.js";
 const factoryAbi: Abi = AgreementFactoryABI as Abi;
 
 // Must match AgreementFactory.sol exactly (PERMIT_WITH_ACTIONS_TYPEHASH)
-const PERMIT_WITH_ACTIONS_TYPE = "PermitAgreementWithActions(string docUri,bytes32 docHash,bytes32 initialState,bytes32 inputDefsHash,bytes32 transitionsHash,bytes32 initVarsHash,bytes32 actionsHash,uint256 nonce,uint256 deadline)";
+const PERMIT_WITH_ACTIONS_TYPE = "PermitAgreementWithActions(string docUri,bytes32 docHash,bytes32 initialState,bytes32 inputDefsHash,bytes32 transitionsHash,bytes32 initVarsHash,bytes32 verifiersHash,bytes32 actionsHash,uint256 nonce,uint256 deadline)";
 const PERMIT_WITH_ACTIONS_TYPEHASH: Hex = keccak256(stringToHex(PERMIT_WITH_ACTIONS_TYPE));
 
 export type CreateAgreementOptions = {
   docUri?: string;
   initValues?: Record<string, InitValue>;
+  verifiers?: VerifierInit[];
 };
 
 export type CreateAgreementPermitSignature = {
@@ -221,6 +224,30 @@ export class AgreementFactory {
     );
   }
 
+  private hashVerifiers(verifiers: VerifierInit[]): Hex {
+    // Matches: keccak256(abi.encode(verifiers_))
+    return keccak256(
+      encodeAbiParameters(
+        [
+          {
+            type: 'tuple[]',
+            name: 'verifiers',
+            components: [
+              { name: 'key', type: 'bytes32' },
+              { name: 'verifier', type: 'address' },
+            ],
+          },
+        ],
+        [
+          verifiers.map((v) => ({
+            key: v.key,
+            verifier: v.verifier,
+          })),
+        ],
+      ),
+    );
+  }
+
   private hashActions(actions: ActionInit[]): Hex {
     // Matches: keccak256(abi.encode(actions_))
     return keccak256(
@@ -282,6 +309,7 @@ export class AgreementFactory {
       options?.docUri,
       options?.initValues
     );
+    const verifiers = options?.verifiers ?? params.verifiers;
 
     const { request } = await this.simulate('createAgreement', [
       params.docUri,
@@ -290,6 +318,7 @@ export class AgreementFactory {
       params.inputDefs,
       params.transitions,
       params.initVars,
+      verifiers,
       params.actions,
     ]);
 
@@ -346,7 +375,7 @@ export class AgreementFactory {
    * Create an EIP-712 permit signature for creating an agreement via the factory.
    *
    * The permit binds the full agreement creation parameters (docUri/docHash/initialState
-   * and hashes of inputDefs/transitions/initVars/actions) plus the signer's current nonce + deadline.
+   * and hashes of inputDefs/transitions/initVars/verifiers/actions) plus the signer's current nonce + deadline.
    *
    * @param walletClient - viem WalletClient to sign typed data (must be connected to an account)
    * @param agreement - The agreement JSON definition
@@ -375,10 +404,12 @@ export class AgreementFactory {
       options?.docUri,
       options?.initValues,
     );
+    const verifiers = options?.verifiers ?? params.verifiers;
 
     const inputDefsHash = this.hashInputDefs(params.inputDefs);
     const transitionsHash = this.hashTransitions(params.transitions);
     const initVarsHash = this.hashInitVars(params.initVars);
+    const verifiersHash = this.hashVerifiers(verifiers);
     const actionsHash = this.hashActions(params.actions);
 
     const chainId = await this.clients.publicClient.getChainId();
@@ -397,6 +428,7 @@ export class AgreementFactory {
         { name: "inputDefsHash", type: "bytes32" },
         { name: "transitionsHash", type: "bytes32" },
         { name: "initVarsHash", type: "bytes32" },
+        { name: "verifiersHash", type: "bytes32" },
         { name: "actionsHash", type: "bytes32" },
         { name: "nonce", type: "uint256" },
         { name: "deadline", type: "uint256" },
@@ -410,6 +442,7 @@ export class AgreementFactory {
       inputDefsHash,
       transitionsHash,
       initVarsHash,
+      verifiersHash,
       actionsHash,
       nonce,
       deadline: BigInt(deadline),
@@ -452,6 +485,7 @@ export class AgreementFactory {
       options?.docUri,
       options?.initValues,
     );
+    const verifiers = options?.verifiers ?? params.verifiers;
 
     const { request } = await this.simulate('createAgreementWithPermit', [
       signer,
@@ -461,6 +495,7 @@ export class AgreementFactory {
       params.inputDefs,
       params.transitions,
       params.initVars,
+      verifiers,
       params.actions,
       BigInt(deadline),
       signature.v,
@@ -535,6 +570,7 @@ export class AgreementFactory {
       options?.docUri,
       options?.initValues
     );
+    const verifiers = options?.verifiers ?? params.verifiers;
 
     const deterministicArgs: readonly unknown[] = [
       salt,
@@ -544,6 +580,7 @@ export class AgreementFactory {
       params.inputDefs,
       params.transitions,
       params.initVars,
+      verifiers,
       params.actions,
     ];
 
@@ -601,6 +638,7 @@ export class AgreementFactory {
       options?.docUri,
       options?.initValues,
     );
+    const verifiers = options?.verifiers ?? params.verifiers;
 
     const { request } = await this.simulate('createAgreementDeterministicWithPermit', [
       signer,
@@ -611,6 +649,7 @@ export class AgreementFactory {
       params.inputDefs,
       params.transitions,
       params.initVars,
+      verifiers,
       params.actions,
       BigInt(deadline),
       signature.v,
@@ -693,4 +732,3 @@ export class AgreementFactory {
   }
 
 }
-

@@ -10,6 +10,12 @@
       "require": "./dist/cjs/index.js"
     }
   },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
   "scripts": {
     "build:inline-json": "node scripts/inline-json.mjs",
     "build:esm": "tsc -p tsconfig.esm.json",

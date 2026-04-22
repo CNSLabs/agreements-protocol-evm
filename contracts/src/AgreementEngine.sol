@@ -114,6 +114,11 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
         bytes32[] verifierKeys;
     }
 
+    struct VerifierInit {
+        bytes32 key;
+        address verifier;
+    }
+
     struct Transition {
         bytes32 fromState;
         bytes32 toState;
@@ -185,7 +190,6 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
     error ComparisonFailed(string op, string fieldType);
     error VarNotSet(bytes32 fieldId);
     error TypeMismatch(string expected, string actual);
-    error NotOwner();
     error NotInitialized();
     error OwnerZero();
     error PermitExpired(uint256 deadline);
@@ -193,6 +197,9 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
     error InvalidNonce(address signer, uint256 provided, uint256 expected);
     error ActionTargetZero();
     error ActionCallFailed(address target, bytes revertData);
+    error VerifierZero();
+    error DuplicateVerifier(bytes32 key);
+    error UnknownVerifier(bytes32 key);
 
     // ========================================================================
     // EVENTS
@@ -231,15 +238,6 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
     );
 
     // ========================================================================
-    // MODIFIERS
-    // ========================================================================
-
-    modifier onlyOwner() {
-        if (msg.sender != owner) revert NotOwner();
-        _;
-    }
-
-    // ========================================================================
     // CONSTRUCTOR (Implementation Protection)
     // ========================================================================
 
@@ -253,7 +251,7 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
     // ========================================================================
 
     /**
-     * @notice Initialize a clone with agreement data and pre-registered actions.
+     * @notice Initialize a clone with agreement data and pre-registered verifiers/actions.
      * @dev Can only be called once per clone (enforced by initializer modifier).
      *      Typically called by `AgreementFactory` right after the clone is deployed.
      *
@@ -264,6 +262,7 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
      * @param inputDefs_ Full set of input definitions accepted by this agreement.
      * @param transitions_ Full set of valid FSM transitions for this agreement.
      * @param initVars_ Initial on-chain variables to store (e.g., participant addresses, amounts).
+     * @param verifiers_ Optional verifier registrations to install at initialization time.
      * @param actions_ Optional per-transition actions to pre-register; pass an empty array for none.
      */
     function initialize(
@@ -274,29 +273,9 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
         InputDef[] calldata inputDefs_,
         Transition[] calldata transitions_,
         DataField[] calldata initVars_,
+        VerifierInit[] calldata verifiers_,
         ActionInit[] calldata actions_
     ) external initializer {
-        _initializeCommon(
-            owner_,
-            docUri_,
-            docHash_,
-            initialState_,
-            inputDefs_,
-            transitions_,
-            initVars_
-        );
-        _storeActions(actions_);
-    }
-
-    function _initializeCommon(
-        address owner_,
-        string calldata docUri_,
-        bytes32 docHash_,
-        bytes32 initialState_,
-        InputDef[] calldata inputDefs_,
-        Transition[] calldata transitions_,
-        DataField[] calldata initVars_
-    ) internal {
         if (owner_ == address(0)) revert OwnerZero();
 
         owner = owner_;
@@ -305,9 +284,11 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
         initialState = initialState_;
         currentState = initialState_;
 
+        _storeVerifiers(verifiers_);
         _storeInputDefs(inputDefs_);
         _storeTransitions(transitions_);
         _storeInitVars(initVars_);
+        _storeActions(actions_);
 
         emit AgreementInitialized(owner_, docUri_, docHash_, initialState_);
     }
@@ -315,41 +296,6 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
     // ========================================================================
     // PUBLIC/EXTERNAL FUNCTIONS
     // ========================================================================
-
-    // -------- Verifier Management --------
-
-    /**
-     * @notice Register a verifier contract for a given key.
-     * @dev Only the agreement owner can register verifiers.
-     * @param key Verifier key (e.g. keccak256("VC_SECP256K1")).
-     * @param verifier Address of the verifier contract.
-     */
-    function registerVerifier(bytes32 key, address verifier) external onlyOwner {
-        require(verifier != address(0), "zero verifier");
-        verifierRegistry[key] = verifier;
-        emit VerifierRegistered(key, verifier);
-    }
-
-    /**
-     * @notice Register an action to be executed when a specific (fromState,inputId) transition occurs.
-     * @dev Only the agreement owner can register actions. Actions are executed via low-level call by this agreement.
-     *
-     * Typical usage for ERC-20 pull payment:
-     * - grantor approves this agreement contract to spend tokens
-     * - owner registers action with target = token and data = abi.encodeWithSelector(transferFrom, grantor, recipient, amount)
-     * - when the payment input is submitted and transition is found, the transferFrom is executed atomically
-     */
-    function registerAction(
-        bytes32 fromState,
-        bytes32 inputId,
-        address target,
-        uint256 value,
-        bytes calldata data
-    ) external onlyOwner {
-        if (target == address(0)) revert ActionTargetZero();
-        actions[fromState][inputId] = Action({target: target, value: value, data: data, exists: true});
-        emit ActionRegistered(fromState, inputId, target, value, data);
-    }
 
     // -------- Input Submission / FSM Execution --------
 
@@ -482,6 +428,21 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
     // ========================================================================
 
     /**
+     * @notice Store verifier registrations in contract storage.
+     * @dev Called during initialization; verifiers are optional (pass empty array).
+     */
+    function _storeVerifiers(VerifierInit[] calldata verifiers_) internal {
+        for (uint256 i = 0; i < verifiers_.length; i++) {
+            VerifierInit calldata verifierInit = verifiers_[i];
+            if (verifierInit.verifier == address(0)) revert VerifierZero();
+            if (verifierRegistry[verifierInit.key] != address(0)) revert DuplicateVerifier(verifierInit.key);
+
+            verifierRegistry[verifierInit.key] = verifierInit.verifier;
+            emit VerifierRegistered(verifierInit.key, verifierInit.verifier);
+        }
+    }
+
+    /**
      * @notice Store input definitions in contract storage.
      * @dev Deep copies calldata structs to avoid stack-too-deep issues.
      */
@@ -506,7 +467,9 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
 
             // Deep copy verifierKeys array
             for (uint256 m = 0; m < src.verifierKeys.length; m++) {
-                dst.verifierKeys.push(src.verifierKeys[m]);
+                bytes32 key = src.verifierKeys[m];
+                if (verifierRegistry[key] == address(0)) revert UnknownVerifier(key);
+                dst.verifierKeys.push(key);
             }
         }
     }

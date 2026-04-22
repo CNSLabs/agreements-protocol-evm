@@ -1,0 +1,9 @@
+Agreements Protocol EVM
+Copyright 2026 CNS Labs Inc.
+
+This repository is split-licensed.
+
+- Core Solidity contract implementations in `contracts/src/**` are licensed under BUSL-1.1.
+- The SDK, client-facing libraries, examples, tests, scripts, deployment metadata, and documentation are licensed under Apache-2.0.
+
+See `LICENSE` and `LICENSING.md` for the repository-wide licensing map.

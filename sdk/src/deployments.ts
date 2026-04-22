@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 import { FactoryConfig } from "./types.js";
 import { Hex } from "viem";
 import { DeploymentsRegistry } from "./generated/DeploymentsRegistry.js";
@@ -107,4 +109,3 @@ export function getAllFactoryConfigs(): FactoryConfig[] {
     chainId: Number(deployment.chainId),
   }));
 }
-

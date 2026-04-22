@@ -1,0 +1,15 @@
+Copyright 2026 CNS Labs Inc.
+
+This directory is split-licensed.
+
+- `src/**` is licensed under `BUSL-1.1`
+- `test/**`, `scripts/**`, `deployments/**`, `hardhat.config.ts`, and this documentation are licensed under `Apache-2.0`
+
+Canonical license texts:
+
+- `../licenses/BUSL-1.1.txt`
+- `../licenses/Apache-2.0.txt`
+
+For the contract source tree specifically, see `src/LICENSE`.
+
+See `../LICENSE` and `../LICENSING.md` for repository-wide details and BUSL parameters.

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 import { expect } from "chai";
 import { ethers } from "hardhat";
 import { Address } from "viem";
@@ -441,4 +443,3 @@ describe("AgreementEngine (integration) - grant-simple FSM with issuer validatio
     });
   });
 });
-

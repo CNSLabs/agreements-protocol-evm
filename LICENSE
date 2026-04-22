@@ -2,8 +2,13 @@ Copyright 2026 CNS Labs Inc.
 
 This repository is split-licensed.
 
-- `contracts/src/**` is licensed under `BUSL-1.1`
-- `sdk/**` is licensed under `Apache-2.0`
-- `contracts/test/**`, `contracts/scripts/**`, `agreements/**`, `.github/**`, `MAPPING.md`, and repository documentation are licensed under `Apache-2.0`
+- Core Solidity contract implementations in `contracts/src/**` are licensed under `BUSL-1.1`.
+- The SDK and client-facing libraries in `sdk/**` are licensed under `Apache-2.0`.
+- Example agreements, tests, scripts, deployment metadata, mapping docs, and repository documentation are licensed under `Apache-2.0`.
 
-See `LICENSING.md` for path-level details and `BUSL-1.1` parameters used by this repository.
+See `LICENSING.md` for the path-level map, BUSL parameters, and package-specific notes.
+
+Bundled canonical license texts:
+
+- `licenses/Apache-2.0.txt`
+- `licenses/BUSL-1.1.txt`

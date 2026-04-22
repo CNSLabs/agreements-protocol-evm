@@ -2,6 +2,8 @@
 
 This directory contains example agreement documents and fixture inputs used by the contract integration tests and SDK tests.
 
+The files in this directory are licensed under `Apache-2.0` as protocol fixtures and examples.
+
 ## Layout
 
 - `*/unwrapped/` contains raw JSON agreement definitions and raw input payloads.

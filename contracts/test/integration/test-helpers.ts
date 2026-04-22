@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Shared test helpers for agreement integration tests
  */
@@ -176,4 +178,3 @@ export async function deployProtocol(): Promise<{
 
   return { factory: _factory, implementation: _implementation };
 }
-

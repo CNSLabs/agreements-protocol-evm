@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Agreement Deployment Tests
  *
@@ -741,6 +743,7 @@ describe("Agreement Deployment from JSON", () => {
       expect(params).toHaveProperty("inputDefs");
       expect(params).toHaveProperty("transitions");
       expect(params).toHaveProperty("initVars");
+      expect(params).toHaveProperty("verifiers");
       expect(params).toHaveProperty("actions");
 
       // InputDefs should be arrays of tuples
@@ -758,6 +761,13 @@ describe("Agreement Deployment from JSON", () => {
       // InitVars should be arrays of tuples
       expect(
         params.initVars.every((v) => "id" in v && "fType" in v && "data" in v)
+      ).toBe(true);
+
+      // Verifiers should be arrays of tuples (may be empty)
+      expect(
+        params.verifiers.every(
+          (v) => "key" in v && "verifier" in v
+        )
       ).toBe(true);
 
       // Actions should be arrays of tuples (may be empty)
@@ -797,13 +807,14 @@ describe("Agreement Deployment from JSON", () => {
           params.inputDefs,
           params.transitions,
           params.initVars,
+          params.verifiers,
           params.actions,
         ],
       });
 
       // Factory's createAgreement signature
       const selector = getFunctionSelector(
-        "createAgreement(string,bytes32,bytes32,(bytes32,(bytes32,uint8,bool,bool)[],(uint8,bytes32,bytes)[],bytes32[])[],(bytes32,bytes32,bytes32)[],(bytes32,uint8,bytes)[],(bytes32,bytes32,address,uint256,bytes)[])"
+        "createAgreement(string,bytes32,bytes32,(bytes32,(bytes32,uint8,bool,bool)[],(uint8,bytes32,bytes)[],bytes32[])[],(bytes32,bytes32,bytes32)[],(bytes32,uint8,bytes)[],(bytes32,address)[],(bytes32,bytes32,address,uint256,bytes)[])"
       );
 
       expect(calldata.startsWith(selector)).toBe(true);
@@ -833,6 +844,7 @@ describe("Agreement Deployment from JSON", () => {
           params.inputDefs,
           params.transitions,
           params.initVars,
+          params.verifiers,
           params.actions,
         ],
       });

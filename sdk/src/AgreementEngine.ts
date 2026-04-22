@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 import {
   type Abi,
   type Hex,
@@ -279,49 +281,6 @@ export class AgreementEngine {
   }
 
   /**
-   * Register a verifier contract for a given key
-   * 
-   * @param key - Verifier key (e.g., keccak256("VC_SECP256K1"))
-   * @param verifier - Address of the verifier contract
-   * @param waitForConfirmation - Whether to wait for transaction confirmation (default: false)
-   * @returns Transaction hash, or receipt if waitForConfirmation is true
-   */
-  async registerVerifier(
-    key: Hex,
-    verifier: Hex,
-    waitForConfirmation: boolean = false
-  ): Promise<Hash | TransactionReceipt> {
-    if (!this.walletClient) {
-      throw new Error(
-        "WalletClient required for registering verifiers. Pass a walletClient to the constructor."
-      );
-    }
-
-    const request: WriteContractParameters = {
-      chain: null,
-      account: this.walletClient.account!,
-      address: this.address,
-      abi: engineAbi,
-      functionName: 'registerVerifier',
-      args: [key, verifier],
-    };
-
-    // Use executeTransaction utility for optional waiting
-    const result = await executeTransaction(
-      request,
-      this.publicClient,
-      this.walletClient,
-      waitForConfirmation
-    );
-
-    // Return hash if not waiting, full receipt if waiting
-    if (waitForConfirmation) {
-      return result as TransactionReceipt;
-    }
-    return result.transactionHash!;
-  }
-
-  /**
    * Get the verifier address for a given key
    * 
    * @param key - Verifier key
@@ -547,4 +506,3 @@ export class AgreementEngine {
     return result.transactionHash!;
   }
 }
-

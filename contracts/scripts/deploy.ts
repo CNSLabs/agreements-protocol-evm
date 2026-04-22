@@ -1,6 +1,73 @@
+// SPDX-License-Identifier: Apache-2.0
+
 import { ethers, run } from "hardhat";
 import * as fs from "fs";
 import * as path from "path";
+
+type VerificationConfig = {
+  enabled: boolean;
+  reason: string;
+};
+
+type VerificationStatus = "verified" | "already-verified" | "failed";
+
+type VerificationResult = {
+  status: VerificationStatus;
+  errorMessage?: string;
+};
+
+function isLocalNetwork(networkName: string) {
+  return networkName === "hardhat" || networkName === "localhost";
+}
+
+function resolveVerificationConfig(networkName: string): VerificationConfig {
+  const verifyOverride = process.env.VERIFY_CONTRACTS;
+  const skipVerification = process.env.SKIP_CONTRACT_VERIFICATION === "true";
+  const hasEtherscanApiKey = (process.env.ETHERSCAN_API_KEY ?? "").trim().length > 0;
+
+  if (isLocalNetwork(networkName)) {
+    return { enabled: false, reason: "local network" };
+  }
+
+  if (skipVerification) {
+    return { enabled: false, reason: "SKIP_CONTRACT_VERIFICATION=true" };
+  }
+
+  if (verifyOverride === "true") {
+    if (hasEtherscanApiKey) {
+      return { enabled: true, reason: "VERIFY_CONTRACTS=true" };
+    }
+    return {
+      enabled: false,
+      reason: "VERIFY_CONTRACTS=true but ETHERSCAN_API_KEY is not set",
+    };
+  }
+
+  if (verifyOverride === "false") {
+    return { enabled: false, reason: "VERIFY_CONTRACTS=false" };
+  }
+
+  if (hasEtherscanApiKey) {
+    return { enabled: true, reason: "ETHERSCAN_API_KEY detected" };
+  }
+
+  return { enabled: false, reason: "ETHERSCAN_API_KEY is not set" };
+}
+
+function getExplorerBaseUrl(networkName: string) {
+  if (networkName === "linea") {
+    return "https://lineascan.build";
+  }
+  if (networkName === "lineaSepolia") {
+    return "https://sepolia.lineascan.build";
+  }
+  return null;
+}
+
+function getCodeUrl(networkName: string, address: string) {
+  const explorerBaseUrl = getExplorerBaseUrl(networkName);
+  return explorerBaseUrl ? `${explorerBaseUrl}/address/${address}#code` : null;
+}
 
 function writeDeploymentInfo(networkName: string, deploymentInfo: Record<string, string>) {
   const deploymentDir = path.join(__dirname, "../deployments");
@@ -16,12 +83,42 @@ function writeDeploymentInfo(networkName: string, deploymentInfo: Record<string,
   return deploymentPath;
 }
 
+async function verifyContract(
+  contractName: string,
+  address: string,
+  constructorArguments: unknown[],
+): Promise<VerificationResult> {
+  try {
+    console.log(`   Verifying ${contractName}...`);
+    await run("verify:verify", {
+      address,
+      constructorArguments,
+    });
+    console.log(`   ✓ ${contractName} verified`);
+    return { status: "verified" };
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    const normalizedError = errorMessage.toLowerCase();
+
+    if (
+      normalizedError.includes("already verified") ||
+      normalizedError.includes("contract source code already verified") ||
+      normalizedError.includes("smart-contract already verified")
+    ) {
+      console.log(`   ✓ ${contractName} already verified`);
+      return { status: "already-verified" };
+    }
+
+    console.warn(`   Warning: failed to verify ${contractName}: ${errorMessage}`);
+    return {
+      status: "failed",
+      errorMessage,
+    };
+  }
+}
+
 async function main() {
   console.log("Deploying Agreements Protocol...");
-
-  // Check if verification should be enabled (defaults to false for safety)
-  // Set VERIFY_CONTRACTS=true to enable verification
-  const shouldVerify = process.env.VERIFY_CONTRACTS === "true";
 
   const [deployer] = await ethers.getSigners();
   console.log("Deploying with account:", deployer.address);
@@ -45,12 +142,14 @@ async function main() {
   const factoryAddress = await factory.getAddress();
   console.log("   Factory deployed to:", factoryAddress);
 
-  const network = await ethers.provider.getNetwork();
-  const isLocalNetwork = network.name === "hardhat" || network.name === "localhost";
+  const providerNetwork = await ethers.provider.getNetwork();
+  const networkName = providerNetwork.name;
+  const verificationConfig = resolveVerificationConfig(networkName);
+  let implementationVerification: VerificationResult | null = null;
+  let factoryVerification: VerificationResult | null = null;
 
-  // Wait for a few block confirmations before verification
-  console.log("\n   Waiting for block confirmations...");
-  if (!isLocalNetwork) {
+  if (verificationConfig.enabled) {
+    console.log("\n3. Waiting for block confirmations before verification...");
     if (implementationTx) {
       console.log("   Waiting for implementation deployment to be confirmed...");
       await implementationTx.wait(5);
@@ -59,69 +158,61 @@ async function main() {
       console.log("   Waiting for factory deployment to be confirmed...");
       await factoryTx.wait(5);
     }
-  } else {
-    console.log("   Local network detected - skipping additional block confirmation wait");
+  } else if (!isLocalNetwork(networkName)) {
+    console.log(`\n3. Skipping contract verification: ${verificationConfig.reason}`);
   }
 
   const deploymentInfo = {
     implementation: implementationAddress,
     factory: factoryAddress,
-    chainId: network.chainId.toString(),
-    network: network.name,
+    chainId: providerNetwork.chainId.toString(),
+    network: networkName,
     deployedAt: new Date().toISOString(),
     deployer: deployer.address,
   };
 
-  const deploymentPath = writeDeploymentInfo(network.name, deploymentInfo);
-  console.log("\n3. Deployment info saved to:", deploymentPath);
+  if (verificationConfig.enabled) {
+    console.log(`\n4. Contract verification enabled: ${verificationConfig.reason}`);
+    implementationVerification = await verifyContract(
+      "AgreementEngine implementation",
+      implementationAddress,
+      [],
+    );
+    factoryVerification = await verifyContract(
+      "AgreementFactory",
+      factoryAddress,
+      [implementationAddress],
+    );
+  }
+
+  const deploymentPath = writeDeploymentInfo(networkName, deploymentInfo);
+  console.log("\n5. Deployment info saved to:", deploymentPath);
   console.log("   Note: SDK will automatically pick up this deployment on next build");
   console.log("   (SDK reads directly from contracts/deployments/ folder)");
-
-  // Verify contracts (if enabled)
-  console.log("\n5. Contract verification...");
-  
-  // Only verify on non-local networks and if verification is enabled
-  if (network.name !== "hardhat" && network.name !== "localhost" && shouldVerify) {
-    try {
-      console.log("   Verifying AgreementEngine implementation...");
-      await run("verify:verify", {
-        address: implementationAddress,
-        constructorArguments: [],
-      });
-      console.log("   ✓ AgreementEngine verified");
-    } catch (error: any) {
-      if (error.message?.includes("Already Verified")) {
-        console.log("   ✓ AgreementEngine already verified");
-      } else {
-        console.warn("   ⚠ Failed to verify AgreementEngine:", error.message);
-      }
-    }
-
-    try {
-      console.log("   Verifying AgreementFactory...");
-      await run("verify:verify", {
-        address: factoryAddress,
-        constructorArguments: [implementationAddress],
-      });
-      console.log("   ✓ AgreementFactory verified");
-    } catch (error: any) {
-      if (error.message?.includes("Already Verified")) {
-        console.log("   ✓ AgreementFactory already verified");
-      } else {
-        console.warn("   ⚠ Failed to verify AgreementFactory:", error.message);
-      }
-    }
-  } else if (network.name === "hardhat" || network.name === "localhost") {
-    console.log("   Skipping verification on local network");
-  } else if (!shouldVerify) {
-    console.log("   ⚠️  Verification skipped (set VERIFY_CONTRACTS=true to enable)");
-  }
 
   console.log("\n=== Deployment Summary ===");
   console.log("Implementation:", implementationAddress);
   console.log("Factory:", factoryAddress);
-  console.log("Network:", network.name);
-  console.log("Chain ID:", network.chainId.toString());
+  console.log("Network:", networkName);
+  console.log("Chain ID:", providerNetwork.chainId.toString());
+
+  const implementationCodeUrl = getCodeUrl(networkName, implementationAddress);
+  if (implementationCodeUrl) {
+    console.log("Implementation explorer:", implementationCodeUrl);
+  }
+  const factoryCodeUrl = getCodeUrl(networkName, factoryAddress);
+  if (factoryCodeUrl) {
+    console.log("Factory explorer:", factoryCodeUrl);
+  }
+
+  if (verificationConfig.enabled) {
+    console.log("Verification:");
+    console.log(`  AgreementEngine implementation: ${implementationVerification?.status ?? "unknown"}`);
+    console.log(`  AgreementFactory: ${factoryVerification?.status ?? "unknown"}`);
+  } else {
+    console.log(`Verification: skipped (${verificationConfig.reason})`);
+  }
+
   console.log("\nDeployment complete!");
 }
 

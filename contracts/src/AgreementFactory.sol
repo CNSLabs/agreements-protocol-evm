@@ -22,9 +22,9 @@ contract AgreementFactory is ReentrancyGuard, EIP712 {
     /// @notice Permit functionality - nonce tracking per signer
     mapping(address => uint256) public nonces;
 
-    /// @notice EIP-712 typehash for permit that also binds action definitions
+    /// @notice EIP-712 typehash for permit that also binds verifier and action definitions
     bytes32 public constant PERMIT_WITH_ACTIONS_TYPEHASH = keccak256(
-        "PermitAgreementWithActions(string docUri,bytes32 docHash,bytes32 initialState,bytes32 inputDefsHash,bytes32 transitionsHash,bytes32 initVarsHash,bytes32 actionsHash,uint256 nonce,uint256 deadline)"
+        "PermitAgreementWithActions(string docUri,bytes32 docHash,bytes32 initialState,bytes32 inputDefsHash,bytes32 transitionsHash,bytes32 initVarsHash,bytes32 verifiersHash,bytes32 actionsHash,uint256 nonce,uint256 deadline)"
     );
 
     // Unused state variable to modify bytecode (version marker)
@@ -75,6 +75,7 @@ contract AgreementFactory is ReentrancyGuard, EIP712 {
      * @param inputDefs_ All input definitions for this agreement
      * @param transitions_ All transitions for this agreement
      * @param initVars_ Initial variables to store
+     * @param verifiers_ Optional verifier registrations to install at initialization time
      * @return agreement Address of the deployed agreement clone
      */
     function createAgreement(
@@ -84,6 +85,7 @@ contract AgreementFactory is ReentrancyGuard, EIP712 {
         AgreementEngine.InputDef[] calldata inputDefs_,
         AgreementEngine.Transition[] calldata transitions_,
         AgreementEngine.DataField[] calldata initVars_,
+        AgreementEngine.VerifierInit[] calldata verifiers_,
         AgreementEngine.ActionInit[] calldata actions_
     ) external nonReentrant returns (address agreement) {
         // Deploy minimal proxy clone (~45k gas)
@@ -100,6 +102,7 @@ contract AgreementFactory is ReentrancyGuard, EIP712 {
             inputDefs_,
             transitions_,
             initVars_,
+            verifiers_,
             actions_
         );
 
@@ -116,6 +119,7 @@ contract AgreementFactory is ReentrancyGuard, EIP712 {
      * @param inputDefs_ All input definitions for this agreement
      * @param transitions_ All transitions for this agreement
      * @param initVars_ Initial variables to store
+     * @param verifiers_ Optional verifier registrations to install at initialization time
      * @return agreement Address of the deployed agreement clone
      */
     function createAgreementDeterministic(
@@ -126,6 +130,7 @@ contract AgreementFactory is ReentrancyGuard, EIP712 {
         AgreementEngine.InputDef[] calldata inputDefs_,
         AgreementEngine.Transition[] calldata transitions_,
         AgreementEngine.DataField[] calldata initVars_,
+        AgreementEngine.VerifierInit[] calldata verifiers_,
         AgreementEngine.ActionInit[] calldata actions_
     ) external nonReentrant returns (address agreement) {
         // Deploy minimal proxy clone at deterministic address
@@ -142,14 +147,15 @@ contract AgreementFactory is ReentrancyGuard, EIP712 {
             inputDefs_,
             transitions_,
             initVars_,
+            verifiers_,
             actions_
         );
 
     }
 
     /**
-     * @notice Create an agreement using a permit signature that also binds pre-registered action definitions.
-     * @dev The permit is an EIP-712 signature by `signer` over the agreement parameters (including `actions_`)
+     * @notice Create an agreement using a permit signature that also binds init-time verifier/action definitions.
+     * @dev The permit is an EIP-712 signature by `signer` over the agreement parameters (including `verifiers_` and `actions_`)
      *      plus the signer's current nonce and `deadline`. Anyone may submit the transaction, but the recovered
      *      signer must match `signer` and the nonce is consumed to prevent replay.
      *
@@ -160,6 +166,7 @@ contract AgreementFactory is ReentrancyGuard, EIP712 {
      * @param inputDefs_ Full set of input definitions accepted by this agreement.
      * @param transitions_ Full set of valid FSM transitions for this agreement.
      * @param initVars_ Initial on-chain variables to store (e.g., participant addresses, amounts).
+     * @param verifiers_ Optional verifier registrations to install at initialization time.
      * @param actions_ Optional per-transition actions to pre-register; pass an empty array for none.
      * @param deadline The timestamp after which the permit is invalid.
      * @param v ECDSA signature recovery byte.
@@ -175,6 +182,7 @@ contract AgreementFactory is ReentrancyGuard, EIP712 {
         AgreementEngine.InputDef[] calldata inputDefs_,
         AgreementEngine.Transition[] calldata transitions_,
         AgreementEngine.DataField[] calldata initVars_,
+        AgreementEngine.VerifierInit[] calldata verifiers_,
         AgreementEngine.ActionInit[] calldata actions_,
         uint256 deadline,
         uint8 v,
@@ -193,6 +201,7 @@ contract AgreementFactory is ReentrancyGuard, EIP712 {
         bytes32 inputDefsHash = keccak256(abi.encode(inputDefs_));
         bytes32 transitionsHash = keccak256(abi.encode(transitions_));
         bytes32 initVarsHash = keccak256(abi.encode(initVars_));
+        bytes32 verifiersHash = keccak256(abi.encode(verifiers_));
         bytes32 actionsHash = keccak256(abi.encode(actions_));
 
         bytes32 structHash = keccak256(
@@ -204,6 +213,7 @@ contract AgreementFactory is ReentrancyGuard, EIP712 {
                 inputDefsHash,
                 transitionsHash,
                 initVarsHash,
+                verifiersHash,
                 actionsHash,
                 currentNonce,
                 deadline
@@ -234,6 +244,7 @@ contract AgreementFactory is ReentrancyGuard, EIP712 {
             inputDefs_,
             transitions_,
             initVars_,
+            verifiers_,
             actions_
         );
     }
@@ -250,6 +261,7 @@ contract AgreementFactory is ReentrancyGuard, EIP712 {
      * @param inputDefs_ Full set of input definitions accepted by this agreement.
      * @param transitions_ Full set of valid FSM transitions for this agreement.
      * @param initVars_ Initial on-chain variables to store (e.g., participant addresses, amounts).
+     * @param verifiers_ Optional verifier registrations to install at initialization time.
      * @param actions_ Optional per-transition actions to pre-register; pass an empty array for none.
      * @param deadline The timestamp after which the permit is invalid.
      * @param v ECDSA signature recovery byte.
@@ -266,6 +278,7 @@ contract AgreementFactory is ReentrancyGuard, EIP712 {
         AgreementEngine.InputDef[] calldata inputDefs_,
         AgreementEngine.Transition[] calldata transitions_,
         AgreementEngine.DataField[] calldata initVars_,
+        AgreementEngine.VerifierInit[] calldata verifiers_,
         AgreementEngine.ActionInit[] calldata actions_,
         uint256 deadline,
         uint8 v,
@@ -284,6 +297,7 @@ contract AgreementFactory is ReentrancyGuard, EIP712 {
         bytes32 inputDefsHash = keccak256(abi.encode(inputDefs_));
         bytes32 transitionsHash = keccak256(abi.encode(transitions_));
         bytes32 initVarsHash = keccak256(abi.encode(initVars_));
+        bytes32 verifiersHash = keccak256(abi.encode(verifiers_));
         bytes32 actionsHash = keccak256(abi.encode(actions_));
 
         bytes32 structHash = keccak256(
@@ -295,6 +309,7 @@ contract AgreementFactory is ReentrancyGuard, EIP712 {
                 inputDefsHash,
                 transitionsHash,
                 initVarsHash,
+                verifiersHash,
                 actionsHash,
                 currentNonce,
                 deadline
@@ -325,6 +340,7 @@ contract AgreementFactory is ReentrancyGuard, EIP712 {
             inputDefs_,
             transitions_,
             initVars_,
+            verifiers_,
             actions_
         );
     }

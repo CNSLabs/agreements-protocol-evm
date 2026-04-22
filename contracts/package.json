@@ -13,6 +13,8 @@
     "gas:check": "hardhat test && npx hardhat run scripts/check-gas-thresholds.ts",
     "deploy": "hardhat run scripts/deploy.ts",
     "deploy:local": "hardhat run scripts/deploy.ts --network localhost",
+    "deploy:lineaSepolia": "hardhat run scripts/deploy.ts --network lineaSepolia",
+    "deploy:linea": "hardhat run scripts/deploy.ts --network linea",
     "node": "hardhat node",
     "node:fork": "HARDHAT_FORK=true hardhat node --fork https://rpc.sepolia.linea.build",
     "slither": "slither . --config-file slither.config.json",
@@ -24,7 +26,7 @@
     "ethereum"
   ],
   "author": "",
-  "license": "BUSL-1.1",
+  "license": "SEE LICENSE IN LICENSE",
   "dependencies": {
     "@openzeppelin/contracts": "^5.0.0"
   },

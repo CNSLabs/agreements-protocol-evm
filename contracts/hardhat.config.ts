@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 import { HardhatUserConfig } from "hardhat/config";
 import "@nomicfoundation/hardhat-toolbox";
 import "@nomicfoundation/hardhat-verify";
@@ -7,7 +9,10 @@ dotenv.config();
 
 const lineaSepoliaRpcUrl =
   process.env.LINEA_SEPOLIA_RPC_URL || "https://rpc.sepolia.linea.build";
+const etherscanApiKey = process.env.ETHERSCAN_API_KEY || "";
+const etherscanApiUrl = "https://api.etherscan.io/v2/api";
 const enableFork = process.env.HARDHAT_FORK === "true";
+const enableGasReporter = process.env.REPORT_GAS === "true";
 
 const hardhatNetwork = enableFork
   ? {
@@ -61,19 +66,19 @@ const config: HardhatUserConfig = {
     target: "ethers-v6",
   },
   gasReporter: {
-    enabled: true,
+    enabled: enableGasReporter,
     currency: "USD",
     outputFile: "gas-report.txt",
     noColors: true,
   },
   etherscan: {
-    apiKey: process.env.ETHERSCAN_API_KEY || "",
+    apiKey: etherscanApiKey,
     customChains: [
       {
         network: "lineaSepolia",
         chainId: 59141,
         urls: {
-          apiURL: "https://api.lineascan.build/api",
+          apiURL: etherscanApiUrl,
           browserURL: "https://sepolia.lineascan.build",
         },
       },
@@ -81,7 +86,7 @@ const config: HardhatUserConfig = {
         network: "linea",
         chainId: 59144,
         urls: {
-          apiURL: "https://api.lineascan.build/api",
+          apiURL: etherscanApiUrl,
           browserURL: "https://lineascan.build",
         },
       },

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 import { describe, it, expect, beforeEach } from "@jest/globals";
 import { ethers } from "ethers";
 import { AgreementFactory } from "../src/AgreementFactory.js";
@@ -161,22 +163,9 @@ describe('AgreementEngine', () => {
       ).rejects.toThrow(); // Will throw either "Signer required" or from payload building
     });
 
-    it('should have registerVerifier method', () => {
-      const agreement = new AgreementEngine(agreementAddress, mockSigner);
-      expect(typeof agreement.registerVerifier).toBe('function');
-    });
-
-    it('should require signer for registerVerifier', async () => {
+    it('should have getVerifier method', () => {
       const agreement = new AgreementEngine(agreementAddress, mockProvider);
-      
-      // The signer check happens, but ethers will also throw if provider can't send
-      // Both errors indicate the same issue - no signer available
-      await expect(
-        agreement.registerVerifier(
-          "0x0000000000000000000000000000000000000000000000000000000000000001" as `0x${string}`,
-          "0x1111111111111111111111111111111111111111" as `0x${string}`
-        )
-      ).rejects.toThrow(); // Will throw either "Signer required" or ethers error
+      expect(typeof agreement.getVerifier).toBe('function');
     });
   });
 });

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 import { describe, it, expect, beforeAll } from "@jest/globals";
 import { keccak256, stringToHex, Address, Hex } from "viem";
 import * as fs from "fs";
@@ -527,6 +529,8 @@ describe("Transformer Parity with Integration Test", () => {
         expect(initVar.fType).toBe(FieldType.ADDRESS);
         expect(initVar.data).toMatch(/^0x[a-fA-F0-9]+$/);
       }
+
+      expect(params.verifiers).toEqual([]);
     });
   });
 });

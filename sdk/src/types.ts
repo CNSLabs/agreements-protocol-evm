@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Type definitions for the Agreements Protocol SDK
  */
@@ -101,6 +103,14 @@ export interface DataField {
 }
 
 /**
+ * Verifier init payload matching AgreementEngine.VerifierInit (used at agreement initialization).
+ */
+export interface VerifierInit {
+  key: Hex;
+  verifier: Hex; // address
+}
+
+/**
  * Action init payload matching AgreementEngine.ActionInit (used at agreement initialization).
  */
 export interface ActionInit {
@@ -121,6 +131,7 @@ export interface CreateAgreementParams {
   inputDefs: InputDef[];
   transitions: Transition[];
   initVars: DataField[];
+  verifiers: VerifierInit[];
   actions: ActionInit[];
 }
 

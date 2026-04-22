@@ -2,6 +2,8 @@
 
 This directory contains the TypeScript SDK for transforming agreement JSON into on-chain parameters and interacting with deployed agreement contracts.
 
+This package is licensed under `Apache-2.0`. It is intended to remain redistributable independently of the BUSL-licensed core contract implementations.
+
 ## Setup
 
 ```bash
@@ -95,3 +97,7 @@ const readOnlyAgreement = new AgreementEngine("0x...", publicClient);
 const state = await readOnlyAgreement.getCurrentState();
 const data = await readOnlyAgreement.getData();
 ```
+
+## License
+
+The SDK package is licensed under `Apache-2.0`. See [`LICENSE`](LICENSE), [`NOTICE`](NOTICE), [../licenses/Apache-2.0.txt](../licenses/Apache-2.0.txt), and [../LICENSING.md](../LICENSING.md).
