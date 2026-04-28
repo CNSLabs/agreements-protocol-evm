@@ -9,6 +9,7 @@
     "test": "hardhat test",
     "test:unit": "hardhat test 'test/*.ts'",
     "test:integration": "hardhat test 'test/integration/*.ts'",
+    "test:fork": "bash scripts/test-fork.sh",
     "test:gas": "hardhat test --grep 'gas' || true",
     "gas:check": "hardhat test && npx hardhat run scripts/check-gas-thresholds.ts",
     "deploy": "hardhat run scripts/deploy.ts",
@@ -16,7 +17,7 @@
     "deploy:lineaSepolia": "hardhat run scripts/deploy.ts --network lineaSepolia",
     "deploy:linea": "hardhat run scripts/deploy.ts --network linea",
     "node": "hardhat node",
-    "node:fork": "HARDHAT_FORK=true hardhat node --fork https://rpc.sepolia.linea.build",
+    "node:fork": "HARDHAT_FORK=true hardhat node",
     "slither": "slither . --config-file slither.config.json",
     "clean": "hardhat clean"
   },

@@ -44,6 +44,9 @@ npm --prefix contracts run node
 # Optional Linea Sepolia fork
 npm --prefix contracts run node:fork
 
+# Deterministic forked contract tests
+npm run contracts:test:fork
+
 # Deploy to localhost
 npm --prefix contracts run deploy:local
 

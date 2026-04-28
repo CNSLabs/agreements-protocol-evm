@@ -30,6 +30,10 @@ npm run test
 ```
 
 By default the test suite runs on a local Hardhat chain without a live network fork.
+Use `npm run test:fork` to run the contract tests against a managed Linea
+Sepolia fork pinned to block `28079114`.
+Set `LINEA_SEPOLIA_RPC_URL`, `HARDHAT_FORK_BLOCK_NUMBER`, or `HARDHAT_PORT`
+to override the default fork RPC, block, or local port.
 
 ### Deploy Contracts
 
@@ -71,6 +75,12 @@ npm run node
 
 ```bash
 npm run node:fork
+```
+
+For deterministic forked tests, use:
+
+```bash
+npm run test:fork
 ```
 
 ### Static Analysis
