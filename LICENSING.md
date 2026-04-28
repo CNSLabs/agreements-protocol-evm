@@ -6,7 +6,7 @@ This repository uses split licensing.
 
 The deployable contract implementation in `contracts/src/**` is licensed under `BUSL-1.1`.
 
-The source tree also includes a dedicated `contracts/src/LICENSE` marker file for that boundary.
+The source tree also includes a dedicated `contracts/src/LICENSE` file with the full BUSL text for that boundary.
 
 Parameters for that license in this repository:
 
