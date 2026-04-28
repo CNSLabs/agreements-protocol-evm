@@ -12,7 +12,18 @@ const lineaSepoliaRpcUrl =
 const etherscanApiKey = process.env.ETHERSCAN_API_KEY || "";
 const etherscanApiUrl = "https://api.etherscan.io/v2/api";
 const enableFork = process.env.HARDHAT_FORK === "true";
+const hardhatPort = process.env.HARDHAT_PORT || "8545";
+const hardhatForkBlockNumber = process.env.HARDHAT_FORK_BLOCK_NUMBER
+  ? Number(process.env.HARDHAT_FORK_BLOCK_NUMBER)
+  : undefined;
 const enableGasReporter = process.env.REPORT_GAS === "true";
+
+if (
+  hardhatForkBlockNumber !== undefined &&
+  (!Number.isSafeInteger(hardhatForkBlockNumber) || hardhatForkBlockNumber <= 0)
+) {
+  throw new Error("HARDHAT_FORK_BLOCK_NUMBER must be a positive integer");
+}
 
 const hardhatNetwork = enableFork
   ? {
@@ -20,6 +31,9 @@ const hardhatNetwork = enableFork
       forking: {
         url: lineaSepoliaRpcUrl,
         enabled: true,
+        ...(hardhatForkBlockNumber !== undefined
+          ? { blockNumber: hardhatForkBlockNumber }
+          : {}),
       },
     }
   : {
@@ -41,7 +55,7 @@ const config: HardhatUserConfig = {
   networks: {
     hardhat: hardhatNetwork,
     localhost: {
-      url: "http://127.0.0.1:8545",
+      url: `http://127.0.0.1:${hardhatPort}`,
       chainId: 59141, // Match Linea Sepolia chain ID
     },
     lineaSepolia: {

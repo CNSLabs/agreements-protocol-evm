@@ -11,6 +11,7 @@
     "contracts:compile": "cd contracts && npm run compile",
     "contracts:lint": "cd contracts && npm run lint",
     "contracts:test": "cd contracts && npm run test",
+    "contracts:test:fork": "cd contracts && npm run test:fork",
     "contracts:deploy": "cd contracts && npm run deploy",
     "sdk:build": "cd sdk && npm run build",
     "sdk:lint": "cd sdk && npm run lint",
