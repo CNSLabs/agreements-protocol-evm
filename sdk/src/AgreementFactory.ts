@@ -5,14 +5,14 @@ import {
   type Hex,
   type PublicClient,
   type WalletClient,
-  type Hash,
   type WriteContractParameters,
   decodeEventLog,
   encodeAbiParameters,
   keccak256,
   stringToHex,
 } from 'viem';
-import { readContractResult } from "./transactions.js";
+import { executeTransaction, readContractResult } from "./transactions.js";
+import { withSdkSpan } from "./telemetry.js";
 import { AgreementJson, FactoryConfig, InputDef, Transition, DataField, VerifierInit, ActionInit } from "./types.js";
 import { transformAgreementToOnChainParams, InitValue } from "./transformer.js";
 import { AgreementFactoryABI } from "./generated/AgreementFactoryAbi.js";
@@ -109,13 +109,49 @@ export class AgreementFactory {
       throw new Error("WalletClient must be connected to an account to simulate/write contracts");
     }
 
-    return await client.simulateContract({
-      account,
-      address: this.config.factoryAddress,
-      abi: factoryAbi,
-      functionName,
-      args,
-    });
+    return await withSdkSpan(
+      "evm.simulate_tx",
+      {
+        "blockchain.chain_id": this.config.chainId ?? client.chain?.id,
+        "blockchain.contract.address": this.config.factoryAddress,
+        "blockchain.contract.function_name": functionName,
+      },
+      async () =>
+        client.simulateContract({
+          account,
+          address: this.config.factoryAddress,
+          abi: factoryAbi,
+          functionName,
+          args,
+        }),
+    );
+  }
+
+  private parseAgreementDeployedAddress(receipt: Awaited<ReturnType<PublicClient["waitForTransactionReceipt"]>>): Hex {
+    let deployedAddress: Hex | undefined;
+    for (const log of receipt.logs) {
+      try {
+        const decoded = decodeEventLog({
+          abi: factoryAbi,
+          data: log.data,
+          topics: log.topics,
+          eventName: 'AgreementDeployed',
+        });
+        if (decoded.eventName === 'AgreementDeployed') {
+          // @ts-expect-error - viem decodes args in a generic way; we know this event has `agreement`
+          deployedAddress = decoded.args.agreement as Hex;
+          break;
+        }
+      } catch {
+        // Not the event we care about, skip
+      }
+    }
+
+    if (!deployedAddress) {
+      throw new Error("AgreementDeployed event not found in transaction receipt");
+    }
+
+    return deployedAddress;
   }
 
   private hashInputDefs(inputDefs: InputDef[]): Hex {
@@ -302,61 +338,51 @@ export class AgreementFactory {
   async createAgreement(
     agreement: AgreementJson,
     options?: CreateAgreementOptions
-  ): Promise<{ address: Hex; request: WriteContractParameters }> {
-    // Transform agreement JSON to on-chain parameters
-    const params = transformAgreementToOnChainParams(
-      agreement,
-      options?.docUri,
-      options?.initValues
+  ): Promise<{
+    address: Hex;
+    request: WriteContractParameters;
+    receipt: Awaited<ReturnType<PublicClient["waitForTransactionReceipt"]>>;
+  }> {
+    return await withSdkSpan(
+      "agreement_factory.create",
+      {
+        "blockchain.chain_id": this.config.chainId ?? this.clients.publicClient?.chain?.id,
+        "blockchain.contract.address": this.config.factoryAddress,
+        "agreement.template_id": agreement.metadata?.templateId,
+      },
+      async () => {
+        const params = transformAgreementToOnChainParams(
+          agreement,
+          options?.docUri,
+          options?.initValues
+        );
+        const verifiers = options?.verifiers ?? params.verifiers;
+
+        const { request } = await this.simulate('createAgreement', [
+          params.docUri,
+          params.docHash,
+          params.initialState,
+          params.inputDefs,
+          params.transitions,
+          params.initVars,
+          verifiers,
+          params.actions,
+        ]);
+
+        const receipt = await executeTransaction(
+          request,
+          this.clients.publicClient,
+          this.clients.walletClient,
+          true,
+        );
+
+        return {
+          address: this.parseAgreementDeployedAddress(receipt),
+          request,
+          receipt,
+        };
+      },
     );
-    const verifiers = options?.verifiers ?? params.verifiers;
-
-    const { request } = await this.simulate('createAgreement', [
-      params.docUri,
-      params.docHash,
-      params.initialState,
-      params.inputDefs,
-      params.transitions,
-      params.initVars,
-      verifiers,
-      params.actions,
-    ]);
-
-    // Execute a read-only receipt to extract the deployed address.
-    // Callers can use `executeTransaction` if they want to actually send the tx & wait.
-    const client = this.clients.publicClient;
-    const wallet = this.clients.walletClient;
-    const hash: Hash = await wallet.writeContract(request);
-    const receipt = await client.waitForTransactionReceipt({ hash });
-    if (!receipt) {
-      throw new Error("Transaction receipt not found");
-    }
-
-    // Parse AgreementDeployed event
-    let deployedAddress: Hex | undefined;
-    for (const log of receipt.logs) {
-      try {
-        const decoded = decodeEventLog({
-          abi: factoryAbi,
-          data: log.data,
-          topics: log.topics,
-          eventName: 'AgreementDeployed',
-        });
-        if (decoded.eventName === 'AgreementDeployed') {
-          // @ts-expect-error - viem decodes args in a generic way; we know this event has `agreement`
-          deployedAddress = decoded.args.agreement as Hex;
-          break;
-        }
-      } catch {
-        // Not the event we care about, skip
-      }
-    }
-
-    if (!deployedAddress) {
-      throw new Error("AgreementDeployed event not found in transaction receipt");
-    }
-
-    return { address: deployedAddress, request };
   }
 
   /**
@@ -479,62 +505,57 @@ export class AgreementFactory {
     deadline: number,
     signature: CreateAgreementPermitSignature,
     options?: CreateAgreementOptions,
-  ): Promise<{ address: Hex; request: WriteContractParameters }> {
-    const params = transformAgreementToOnChainParams(
-      agreement,
-      options?.docUri,
-      options?.initValues,
+  ): Promise<{
+    address: Hex;
+    request: WriteContractParameters;
+    receipt: Awaited<ReturnType<PublicClient["waitForTransactionReceipt"]>>;
+  }> {
+    return await withSdkSpan(
+      "agreement_factory.create_with_permit",
+      {
+        "blockchain.chain_id": this.config.chainId ?? this.clients.publicClient?.chain?.id,
+        "blockchain.contract.address": this.config.factoryAddress,
+        "agreement.template_id": agreement.metadata?.templateId,
+        "wallet.signer": signer,
+      },
+      async () => {
+        const params = transformAgreementToOnChainParams(
+          agreement,
+          options?.docUri,
+          options?.initValues,
+        );
+        const verifiers = options?.verifiers ?? params.verifiers;
+
+        const { request } = await this.simulate('createAgreementWithPermit', [
+          signer,
+          params.docUri,
+          params.docHash,
+          params.initialState,
+          params.inputDefs,
+          params.transitions,
+          params.initVars,
+          verifiers,
+          params.actions,
+          BigInt(deadline),
+          signature.v,
+          signature.r,
+          signature.s,
+        ]);
+
+        const receipt = await executeTransaction(
+          request,
+          this.clients.publicClient,
+          this.clients.walletClient,
+          true,
+        );
+
+        return {
+          address: this.parseAgreementDeployedAddress(receipt),
+          request,
+          receipt,
+        };
+      },
     );
-    const verifiers = options?.verifiers ?? params.verifiers;
-
-    const { request } = await this.simulate('createAgreementWithPermit', [
-      signer,
-      params.docUri,
-      params.docHash,
-      params.initialState,
-      params.inputDefs,
-      params.transitions,
-      params.initVars,
-      verifiers,
-      params.actions,
-      BigInt(deadline),
-      signature.v,
-      signature.r,
-      signature.s,
-    ]);
-
-    const client = this.clients.publicClient;
-    const wallet = this.clients.walletClient;
-    const hash: Hash = await wallet.writeContract(request);
-    const receipt = await client.waitForTransactionReceipt({ hash });
-    if (!receipt) {
-      throw new Error("Transaction receipt not found");
-    }
-
-    let deployedAddress: Hex | undefined;
-    for (const log of receipt.logs) {
-      try {
-        const decoded = decodeEventLog({
-          abi: factoryAbi,
-          data: log.data,
-          topics: log.topics,
-          eventName: 'AgreementDeployed',
-        });
-        if (decoded.eventName === 'AgreementDeployed') {
-          // @ts-expect-error - viem decodes args generically; we know this event has `agreement`
-          deployedAddress = decoded.args.agreement as Hex;
-          break;
-        }
-      } catch {
-        // Not the event we care about, skip
-      }
-    }
-
-    if (!deployedAddress) {
-      throw new Error("AgreementDeployed event not found in transaction receipt");
-    }
-
-    return { address: deployedAddress, request };
   }
 
   /**
@@ -563,62 +584,53 @@ export class AgreementFactory {
     agreement: AgreementJson,
     salt: Hex,
     options?: CreateAgreementOptions
-  ): Promise<{ address: Hex; request: WriteContractParameters }> {
-    // Transform agreement JSON to on-chain parameters
-    const params = transformAgreementToOnChainParams(
-      agreement,
-      options?.docUri,
-      options?.initValues
+  ): Promise<{
+    address: Hex;
+    request: WriteContractParameters;
+    receipt: Awaited<ReturnType<PublicClient["waitForTransactionReceipt"]>>;
+  }> {
+    return await withSdkSpan(
+      "agreement_factory.create_deterministic",
+      {
+        "blockchain.chain_id": this.config.chainId ?? this.clients.publicClient?.chain?.id,
+        "blockchain.contract.address": this.config.factoryAddress,
+        "agreement.template_id": agreement.metadata?.templateId,
+      },
+      async () => {
+        const params = transformAgreementToOnChainParams(
+          agreement,
+          options?.docUri,
+          options?.initValues
+        );
+        const verifiers = options?.verifiers ?? params.verifiers;
+
+        const deterministicArgs: readonly unknown[] = [
+          salt,
+          params.docUri,
+          params.docHash,
+          params.initialState,
+          params.inputDefs,
+          params.transitions,
+          params.initVars,
+          verifiers,
+          params.actions,
+        ];
+
+        const { request } = await this.simulate('createAgreementDeterministic', deterministicArgs);
+        const receipt = await executeTransaction(
+          request,
+          this.clients.publicClient,
+          this.clients.walletClient,
+          true,
+        );
+
+        return {
+          address: this.parseAgreementDeployedAddress(receipt),
+          request,
+          receipt,
+        };
+      },
     );
-    const verifiers = options?.verifiers ?? params.verifiers;
-
-    const deterministicArgs: readonly unknown[] = [
-      salt,
-      params.docUri,
-      params.docHash,
-      params.initialState,
-      params.inputDefs,
-      params.transitions,
-      params.initVars,
-      verifiers,
-      params.actions,
-    ];
-
-    const { request } = await this.simulate('createAgreementDeterministic', deterministicArgs);
-
-    const client = this.clients.publicClient;
-    const wallet = this.clients.walletClient;
-    const hash: Hash = await wallet.writeContract(request);
-    const receipt = await client.waitForTransactionReceipt({ hash });
-    if (!receipt) {
-      throw new Error("Transaction receipt not found");
-    }
-
-    // Parse AgreementDeployed event
-    let deployedAddress: Hex | undefined;
-    for (const log of receipt.logs) {
-      try {
-        const decoded = decodeEventLog({
-          abi: factoryAbi,
-          data: log.data,
-          topics: log.topics,
-          eventName: 'AgreementDeployed',
-        });
-        if (decoded.eventName === 'AgreementDeployed') {
-          // @ts-expect-error - viem decodes args in a generic way; we know this event has `agreement`
-          deployedAddress = decoded.args.agreement as Hex;
-          break;
-        }
-      } catch {
-        // Not the event we care about, skip
-      }
-    }
-
-    if (!deployedAddress) {
-      throw new Error("AgreementDeployed event not found in transaction receipt");
-    }
-
-    return { address: deployedAddress, request };
   }
 
   /**
@@ -632,63 +644,58 @@ export class AgreementFactory {
     deadline: number,
     signature: CreateAgreementPermitSignature,
     options?: CreateAgreementOptions,
-  ): Promise<{ address: Hex; request: WriteContractParameters }> {
-    const params = transformAgreementToOnChainParams(
-      agreement,
-      options?.docUri,
-      options?.initValues,
+  ): Promise<{
+    address: Hex;
+    request: WriteContractParameters;
+    receipt: Awaited<ReturnType<PublicClient["waitForTransactionReceipt"]>>;
+  }> {
+    return await withSdkSpan(
+      "agreement_factory.create_deterministic_with_permit",
+      {
+        "blockchain.chain_id": this.config.chainId ?? this.clients.publicClient?.chain?.id,
+        "blockchain.contract.address": this.config.factoryAddress,
+        "agreement.template_id": agreement.metadata?.templateId,
+        "wallet.signer": signer,
+      },
+      async () => {
+        const params = transformAgreementToOnChainParams(
+          agreement,
+          options?.docUri,
+          options?.initValues,
+        );
+        const verifiers = options?.verifiers ?? params.verifiers;
+
+        const { request } = await this.simulate('createAgreementDeterministicWithPermit', [
+          signer,
+          salt,
+          params.docUri,
+          params.docHash,
+          params.initialState,
+          params.inputDefs,
+          params.transitions,
+          params.initVars,
+          verifiers,
+          params.actions,
+          BigInt(deadline),
+          signature.v,
+          signature.r,
+          signature.s,
+        ]);
+
+        const receipt = await executeTransaction(
+          request,
+          this.clients.publicClient,
+          this.clients.walletClient,
+          true,
+        );
+
+        return {
+          address: this.parseAgreementDeployedAddress(receipt),
+          request,
+          receipt,
+        };
+      },
     );
-    const verifiers = options?.verifiers ?? params.verifiers;
-
-    const { request } = await this.simulate('createAgreementDeterministicWithPermit', [
-      signer,
-      salt,
-      params.docUri,
-      params.docHash,
-      params.initialState,
-      params.inputDefs,
-      params.transitions,
-      params.initVars,
-      verifiers,
-      params.actions,
-      BigInt(deadline),
-      signature.v,
-      signature.r,
-      signature.s,
-    ]);
-
-    const client = this.clients.publicClient;
-    const wallet = this.clients.walletClient;
-    const hash: Hash = await wallet.writeContract(request);
-    const receipt = await client.waitForTransactionReceipt({ hash });
-    if (!receipt) {
-      throw new Error("Transaction receipt not found");
-    }
-
-    let deployedAddress: Hex | undefined;
-    for (const log of receipt.logs) {
-      try {
-        const decoded = decodeEventLog({
-          abi: factoryAbi,
-          data: log.data,
-          topics: log.topics,
-          eventName: 'AgreementDeployed',
-        });
-        if (decoded.eventName === 'AgreementDeployed') {
-          // @ts-expect-error - viem decodes args generically; we know this event has `agreement`
-          deployedAddress = decoded.args.agreement as Hex;
-          break;
-        }
-      } catch {
-        // Not the event we care about, skip
-      }
-    }
-
-    if (!deployedAddress) {
-      throw new Error("AgreementDeployed event not found in transaction receipt");
-    }
-
-    return { address: deployedAddress, request };
   }
 
   /**
