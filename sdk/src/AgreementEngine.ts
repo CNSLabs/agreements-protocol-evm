@@ -13,6 +13,7 @@ import { readContractResult, executeTransaction } from "./transactions.js";
 import { OnChainAgreement, AgreementJson } from "./types.js";
 import { buildInputPayload, inputToBytes32 } from "./payload-builder.js";
 import { stateToBytes32 } from "./transformer.js";
+import { withSdkSpan } from "./telemetry.js";
 import { AgreementEngineABI } from "./generated/AgreementEngineAbi.js";
 
 // Use inlined ABI data (works in both Node.js and browser)
@@ -68,47 +69,56 @@ export class AgreementEngine {
    * ```
    */
   async getData(): Promise<OnChainAgreement> {
-    const [docUri, docHash, initialState, currentState, owner] = await Promise.all([
-      readContractResult<typeof engineAbi, 'docUri', string>(this.publicClient, {
-        address: this.address,
-        abi: engineAbi,
-        functionName: 'docUri',
-        args: [],
-      }),
-      readContractResult<typeof engineAbi, 'docHash', Hex>(this.publicClient, {
-        address: this.address,
-        abi: engineAbi,
-        functionName: 'docHash',
-        args: [],
-      }),
-      readContractResult<typeof engineAbi, 'initialState', Hex>(this.publicClient, {
-        address: this.address,
-        abi: engineAbi,
-        functionName: 'initialState',
-        args: [],
-      }),
-      readContractResult<typeof engineAbi, 'currentState', Hex>(this.publicClient, {
-        address: this.address,
-        abi: engineAbi,
-        functionName: 'currentState',
-        args: [],
-      }),
-      readContractResult<typeof engineAbi, 'owner', Hex>(this.publicClient, {
-        address: this.address,
-        abi: engineAbi,
-        functionName: 'owner',
-        args: [],
-      }),
-    ]);
+    return await withSdkSpan(
+      "agreement_engine.get_data",
+      {
+        "blockchain.chain_id": this.publicClient.chain?.id,
+        "agreement.address": this.address,
+      },
+      async () => {
+        const [docUri, docHash, initialState, currentState, owner] = await Promise.all([
+          readContractResult<typeof engineAbi, 'docUri', string>(this.publicClient, {
+            address: this.address,
+            abi: engineAbi,
+            functionName: 'docUri',
+            args: [],
+          }),
+          readContractResult<typeof engineAbi, 'docHash', Hex>(this.publicClient, {
+            address: this.address,
+            abi: engineAbi,
+            functionName: 'docHash',
+            args: [],
+          }),
+          readContractResult<typeof engineAbi, 'initialState', Hex>(this.publicClient, {
+            address: this.address,
+            abi: engineAbi,
+            functionName: 'initialState',
+            args: [],
+          }),
+          readContractResult<typeof engineAbi, 'currentState', Hex>(this.publicClient, {
+            address: this.address,
+            abi: engineAbi,
+            functionName: 'currentState',
+            args: [],
+          }),
+          readContractResult<typeof engineAbi, 'owner', Hex>(this.publicClient, {
+            address: this.address,
+            abi: engineAbi,
+            functionName: 'owner',
+            args: [],
+          }),
+        ]);
 
-    return {
-      address: this.address,
-      docUri,
-      docHash: docHash as Hex,
-      initialState: initialState as Hex,
-      currentState: currentState as Hex,
-      owner: owner as Hex,
-    };
+        return {
+          address: this.address,
+          docUri,
+          docHash: docHash as Hex,
+          initialState: initialState as Hex,
+          currentState: currentState as Hex,
+          owner: owner as Hex,
+        };
+      },
+    );
   }
 
   /**
@@ -128,26 +138,35 @@ export class AgreementEngine {
    * ```
    */
   async getCurrentState(agreementJson?: AgreementJson): Promise<Hex | string> {
-    const state = await readContractResult<typeof engineAbi, 'currentState', Hex>(this.publicClient, {
-      address: this.address,
-      abi: engineAbi,
-      functionName: 'currentState',
-      args: [],
-    });
-    const stateHex = state;
-    
-    if (agreementJson) {
-      // Look up state name by comparing bytes32 values
-      const states = Object.keys(agreementJson.execution.states);
-      for (const stateName of states) {
-        if (stateToBytes32(stateName).toLowerCase() === stateHex.toLowerCase()) {
-          return stateName;
+    return await withSdkSpan(
+      "agreement_engine.get_current_state",
+      {
+        "blockchain.chain_id": this.publicClient.chain?.id,
+        "agreement.address": this.address,
+      },
+      async () => {
+        const state = await readContractResult<typeof engineAbi, 'currentState', Hex>(this.publicClient, {
+          address: this.address,
+          abi: engineAbi,
+          functionName: 'currentState',
+          args: [],
+        });
+        const stateHex = state;
+
+        if (agreementJson) {
+          // Look up state name by comparing bytes32 values
+          const states = Object.keys(agreementJson.execution.states);
+          for (const stateName of states) {
+            if (stateToBytes32(stateName).toLowerCase() === stateHex.toLowerCase()) {
+              return stateName;
+            }
+          }
+          throw new Error(`State ${stateHex} not found in agreement states`);
         }
-      }
-      throw new Error(`State ${stateHex} not found in agreement states`);
-    }
-    
-    return stateHex;
+
+        return stateHex;
+      },
+    );
   }
 
   /**
@@ -245,39 +264,49 @@ export class AgreementEngine {
     data: Record<string, unknown>,
     waitForConfirmation: boolean = false
   ): Promise<Hash | TransactionReceipt> {
-    if (!this.walletClient) {
-      throw new Error(
-        "WalletClient required for submitting inputs. Pass a walletClient to the constructor."
-      );
-    }
+    return await withSdkSpan(
+      "agreement_engine.submit_input",
+      {
+        "blockchain.chain_id": this.publicClient.chain?.id,
+        "agreement.address": this.address,
+        "agreement.input_id": inputId,
+      },
+      async () => {
+        if (!this.walletClient) {
+          throw new Error(
+            "WalletClient required for submitting inputs. Pass a walletClient to the constructor."
+          );
+        }
 
-    // Build payload using payload-builder
-    const payload = buildInputPayload(agreement, inputId, data);
-    const inputIdBytes32 = inputToBytes32(inputId);
+        // Build payload using payload-builder
+        const payload = buildInputPayload(agreement, inputId, data);
+        const inputIdBytes32 = inputToBytes32(inputId);
 
-    // Build the write contract request
-    const request: WriteContractParameters = {
-      chain: null,
-      account: this.walletClient.account!,
-      address: this.address,
-      abi: engineAbi,
-      functionName: 'submitInput',
-      args: [inputIdBytes32, payload],
-    };
+        // Build the write contract request
+        const request: WriteContractParameters = {
+          chain: null,
+          account: this.walletClient.account!,
+          address: this.address,
+          abi: engineAbi,
+          functionName: 'submitInput',
+          args: [inputIdBytes32, payload],
+        };
 
-    // Use executeTransaction utility for optional waiting
-    const result = await executeTransaction(
-      request,
-      this.publicClient,
-      this.walletClient,
-      waitForConfirmation
+        // Use executeTransaction utility for optional waiting
+        const result = await executeTransaction(
+          request,
+          this.publicClient,
+          this.walletClient,
+          waitForConfirmation
+        );
+
+        // Return hash if not waiting, full receipt if waiting
+        if (waitForConfirmation) {
+          return result as TransactionReceipt;
+        }
+        return result.transactionHash!;
+      },
     );
-
-    // Return hash if not waiting, full receipt if waiting
-    if (waitForConfirmation) {
-      return result as TransactionReceipt;
-    }
-    return result.transactionHash!;
   }
 
   /**
@@ -463,46 +492,57 @@ export class AgreementEngine {
     signature: { v: number; r: string; s: string },
     waitForConfirmation: boolean = false
   ): Promise<Hash | TransactionReceipt> {
-    if (!this.walletClient) {
-      throw new Error(
-        "WalletClient required for submitting inputs. Pass a walletClient to the constructor."
-      );
-    }
+    return await withSdkSpan(
+      "agreement_engine.submit_input_with_permit",
+      {
+        "blockchain.chain_id": this.publicClient.chain?.id,
+        "agreement.address": this.address,
+        "agreement.input_id": inputId,
+        "wallet.signer": signer,
+      },
+      async () => {
+        if (!this.walletClient) {
+          throw new Error(
+            "WalletClient required for submitting inputs. Pass a walletClient to the constructor."
+          );
+        }
 
-    // Build payload (must match what was signed)
-    const payload = buildInputPayload(agreement, inputId, data);
-    const inputIdBytes32 = inputToBytes32(inputId);
+        // Build payload (must match what was signed)
+        const payload = buildInputPayload(agreement, inputId, data);
+        const inputIdBytes32 = inputToBytes32(inputId);
 
-    // Build the write contract request
-    const request: WriteContractParameters = {
-      chain: null,
-      account: this.walletClient.account!,
-      address: this.address,
-      abi: engineAbi,
-      functionName: 'submitInputWithPermit',
-      args: [
-        signer,
-        inputIdBytes32,
-        payload,
-        BigInt(deadline),
-        signature.v,
-        signature.r,
-        signature.s,
-      ],
-    };
+        // Build the write contract request
+        const request: WriteContractParameters = {
+          chain: null,
+          account: this.walletClient.account!,
+          address: this.address,
+          abi: engineAbi,
+          functionName: 'submitInputWithPermit',
+          args: [
+            signer,
+            inputIdBytes32,
+            payload,
+            BigInt(deadline),
+            signature.v,
+            signature.r,
+            signature.s,
+          ],
+        };
 
-    // Use executeTransaction utility for optional waiting
-    const result = await executeTransaction(
-      request,
-      this.publicClient,
-      this.walletClient,
-      waitForConfirmation
+        // Use executeTransaction utility for optional waiting
+        const result = await executeTransaction(
+          request,
+          this.publicClient,
+          this.walletClient,
+          waitForConfirmation
+        );
+
+        // Return hash if not waiting, full receipt if waiting
+        if (waitForConfirmation) {
+          return result as TransactionReceipt;
+        }
+        return result.transactionHash!;
+      },
     );
-
-    // Return hash if not waiting, full receipt if waiting
-    if (waitForConfirmation) {
-      return result as TransactionReceipt;
-    }
-    return result.transactionHash!;
   }
 }

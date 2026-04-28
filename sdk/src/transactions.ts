@@ -9,6 +9,7 @@ import {
   type WalletClient,
   type WriteContractParameters,
 } from 'viem';
+import { withSdkSpan } from "./telemetry.js";
 
 /**
  * Execute a previously simulated transaction request.
@@ -20,17 +21,62 @@ import {
 export async function executeTransaction(
   request: WriteContractParameters,
   publicClient: PublicClient,
+  walletClient: WalletClient | undefined,
+  waitForConfirmation: true,
+): Promise<TransactionReceipt>;
+export async function executeTransaction(
+  request: WriteContractParameters,
+  publicClient: PublicClient,
+  walletClient?: WalletClient,
+  waitForConfirmation?: false,
+): Promise<{ transactionHash: Hash }>;
+export async function executeTransaction(
+  request: WriteContractParameters,
+  publicClient: PublicClient,
+  walletClient: WalletClient | undefined,
+  waitForConfirmation: boolean,
+): Promise<TransactionReceipt | { transactionHash: Hash }>;
+export async function executeTransaction(
+  request: WriteContractParameters,
+  publicClient: PublicClient,
   walletClient?: WalletClient,
   waitForConfirmation: boolean = false,
-): Promise<Partial<TransactionReceipt>> {
+): Promise<TransactionReceipt | { transactionHash: Hash }> {
   if (!walletClient) {
     throw new Error("Agreements SDK - WalletClient not available");
   }
 
-  const hash: Hash = await walletClient.writeContract(request);
+  const contractAddress = typeof request.address === "string" ? request.address : undefined;
+  const functionName =
+    typeof request.functionName === "string" ? request.functionName : undefined;
+  const chainId = publicClient.chain?.id;
+
+  const hash: Hash = await withSdkSpan(
+    "evm.send_tx",
+    {
+      "blockchain.chain_id": chainId,
+      "blockchain.contract.address": contractAddress,
+      "blockchain.contract.function_name": functionName,
+      "evm.wait_for_confirmation": waitForConfirmation,
+    },
+    async (span) => {
+      const txHash = await walletClient.writeContract(request);
+      span.setAttribute("blockchain.transaction_hash", txHash);
+      return txHash;
+    },
+  );
 
   if (waitForConfirmation) {
-    return await publicClient.waitForTransactionReceipt({ hash });
+    return await withSdkSpan(
+      "evm.wait_receipt",
+      {
+        "blockchain.chain_id": chainId,
+        "blockchain.contract.address": contractAddress,
+        "blockchain.contract.function_name": functionName,
+        "blockchain.transaction_hash": hash,
+      },
+      async () => publicClient.waitForTransactionReceipt({ hash }),
+    );
   }
 
   return { transactionHash: hash };
@@ -54,5 +100,3 @@ export async function readContractResult<
 ): Promise<TResult> {
   return client.readContract(params as any) as Promise<TResult>;
 }
-
-
