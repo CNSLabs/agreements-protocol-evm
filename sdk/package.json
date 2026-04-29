@@ -1,7 +1,9 @@
 {
-  "name": "@agreements-protocol/sdk",
-  "version": "1.0.0",
+  "name": "@cns-labs/agreements-protocol-evm",
+  "version": "0.0.2",
   "description": "TypeScript SDK for the Agreements Protocol",
+  "author": "CNS Labs",
+  "license": "Apache-2.0",
   "main": "./dist/cjs/index.js",
   "types": "./dist/esm/index.d.ts",
   "exports": {
@@ -28,13 +30,12 @@
     "prepublishOnly": "npm run build"
   },
   "keywords": [
+    "cns-labs",
     "agreements-protocol",
-    "sdk",
-    "typescript",
-    "blockchain"
+    "ethereum", 
+    "evm",    
+    "typescript"
   ],
-  "author": "",
-  "license": "Apache-2.0",
   "devDependencies": {
     "@opentelemetry/sdk-trace-base": "^2.6.1",
     "@types/jest": "^29.5.11",
