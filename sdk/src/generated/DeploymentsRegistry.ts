@@ -9,20 +9,20 @@
 export const DeploymentsRegistry = {
   "deployments": {
     "59141": {
-      "implementation": "0xE8596c6B8d8e8840023C97770a6F2cAdB16E9790",
-      "factory": "0x0B749A684649DBdFc09340014131e1A604eF5181",
+      "implementation": "0x1F0f9c889E6c762D8D5669c65a1A8fDFbEe38664",
+      "factory": "0x26Ff3AdEC23fC5778f190371B1CcCadDa74e26c8",
       "chainId": "59141",
       "network": "lineaSepolia",
-      "deployedAt": "2026-02-24T21:53:44.953Z",
-      "deployer": "0x158bec25302F319a65C52A0e6751A974e840423C"
+      "deployedAt": "2026-04-28T18:27:40.269Z",
+      "deployer": "0x2a6fFb5341F8C1cE123343162E3351F1B6286C43"
     },
     "59144": {
-      "implementation": "0xE8596c6B8d8e8840023C97770a6F2cAdB16E9790",
-      "factory": "0x0B749A684649DBdFc09340014131e1A604eF5181",
+      "implementation": "0x9263A3a927939Aa76bE7bFa1850A1ef50454e122",
+      "factory": "0xB772Ea12546fd7153Bf1F5ED7266B8faB0dAD6C9",
       "chainId": "59144",
       "network": "linea",
-      "deployedAt": "2026-02-24T21:52:13.409Z",
-      "deployer": "0x158bec25302F319a65C52A0e6751A974e840423C"
+      "deployedAt": "2026-04-28T18:32:36.415Z",
+      "deployer": "0x77Fb68De6B525122DDb70aD86889Cc028593f7C9"
     }
   }
 } as const;
