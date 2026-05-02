@@ -32,8 +32,8 @@
   "keywords": [
     "cns-labs",
     "agreements-protocol",
-    "ethereum", 
-    "evm",    
+    "ethereum",
+    "evm",
     "typescript"
   ],
   "devDependencies": {
