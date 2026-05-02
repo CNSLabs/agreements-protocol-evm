@@ -67,7 +67,7 @@ export class AgreementFactory {
    * ```typescript
    * const factory = new AgreementFactory(
    *   { factoryAddress: "0x..." },
-   *   signer
+   *   { publicClient, walletClient }
    * );
    * ```
    */
@@ -325,9 +325,12 @@ export class AgreementFactory {
    * 
    * @example
    * ```typescript
-   * const factory = new AgreementFactory("0x...", signer);
+   * const factory = new AgreementFactory(
+   *   { factoryAddress: "0x..." },
+   *   { publicClient, walletClient }
+   * );
    * 
-   * const { address, tx } = await factory.createAgreement(agreementJson, {
+   * const { address, receipt } = await factory.createAgreement(agreementJson, {
    *   initValues: {
    *     grantorEthAddress: "0x123...",
    *     recipientEthAddress: "0x456..."
@@ -570,10 +573,13 @@ export class AgreementFactory {
    * 
    * @example
    * ```typescript
-   * const factory = new AgreementFactory("0x...", signer);
+   * const factory = new AgreementFactory(
+   *   { factoryAddress: "0x..." },
+   *   { publicClient, walletClient }
+   * );
    * const salt = "0x1234...";
    * 
-   * const { address, tx } = await factory.createAgreementDeterministic(
+   * const { address, receipt } = await factory.createAgreementDeterministic(
    *   agreementJson,
    *   salt,
    *   { initValues: { ... } }
@@ -706,7 +712,10 @@ export class AgreementFactory {
    * 
    * @example
    * ```typescript
-   * const factory = new AgreementFactory("0x...", provider);
+   * const factory = new AgreementFactory(
+   *   { factoryAddress: "0x..." },
+   *   { publicClient, walletClient }
+   * );
    * const predictedAddress = await factory.predictAddress("0x1234...");
    * ```
    */

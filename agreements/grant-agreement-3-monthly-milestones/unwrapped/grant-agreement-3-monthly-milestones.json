@@ -62,7 +62,7 @@
       }
     },
     "totalGrantAmount": {
-      "type": "number",
+      "type": "uint256",
       "name": "Total Grant Amount",
       "description": "Total grant amount denominated in USDT",
       "validation": {
@@ -71,7 +71,7 @@
       }
     },
     "installmentAmount": {
-      "type": "number",
+      "type": "uint256",
       "name": "Installment Amount",
       "description": "Amount per monthly installment in USDT",
       "validation": {

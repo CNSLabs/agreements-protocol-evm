@@ -43,7 +43,7 @@ Once built, you can import and use the SDK.
 ### Creating Agreements
 
 ```typescript
-import { AgreementFactory } from "@agreements-protocol/sdk";
+import { AgreementFactory } from "@cns-labs/agreements-protocol-evm";
 import { createPublicClient, createWalletClient, http } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 
@@ -58,8 +58,7 @@ const walletClient = createWalletClient({
 
 const factory = new AgreementFactory(
   { factoryAddress: "0x..." },
-  publicClient,
-  walletClient,
+  { publicClient, walletClient },
 );
 
 const { address } = await factory.createAgreement(agreementJson, {
@@ -73,7 +72,7 @@ const { address } = await factory.createAgreement(agreementJson, {
 ### Interacting With Agreements
 
 ```typescript
-import { AgreementEngine } from "@agreements-protocol/sdk";
+import { AgreementEngine } from "@cns-labs/agreements-protocol-evm";
 import { createPublicClient, createWalletClient, http } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 

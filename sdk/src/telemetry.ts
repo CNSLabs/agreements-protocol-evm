@@ -42,7 +42,7 @@ export function withSdkSpan<T>(
     Object.entries(attributes).filter(([, value]) => isPresent(value)),
   ) as Record<string, SpanAttributeValue>;
 
-  return trace.getTracer("@agreements-protocol/sdk").startActiveSpan(
+  return trace.getTracer("@cns-labs/agreements-protocol-evm").startActiveSpan(
     name,
     { attributes: filteredAttributes },
     (span) => {
