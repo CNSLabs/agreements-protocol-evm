@@ -14,7 +14,7 @@ This document highlights the **data transformations** needed to implement the ag
 |---|---|---:|---|---|---|
 | `string` | template `variables[*].type` | `STRING` | `bytes data` inside `DataField` / `StoredVar` | `abi.encode(string)` | Equality uses `keccak256(bytes(s))` when needed. |
 | `address` | template `variables[*].type` | `ADDRESS` | `bytes` | `abi.encode(address)` | SDK auto-persists address vars so conditions can reference them. |
-| `number` | template `variables[*].type` | `UINT256` (opinionated) | `bytes` | `abi.encode(uint256)` (via `BigInt(...)`) | Precision/range change: JSON number → EVM integer; decimals require scaling; no negatives. |
+| `uint256` | template `variables[*].type` | `UINT256` | `bytes` | `abi.encode(uint256)` (via `BigInt(...)`) | EVM-profile integer type. Decimals require scaling; negative values are not supported. |
 | `dateTime` | template `variables[*].type` | `STRING` (opinionated) | `bytes` | `abi.encode(string)` | Stored as ISO string; no native datetime ops on-chain. |
 
 ### Protocol-specific “extended” types (used by EVM protocol JSON)
@@ -40,9 +40,9 @@ This document highlights the **data transformations** needed to implement the ag
 |---|---|---|---|
 | `required` | all types | `InputFieldDef.required = true/false` | Required fields revert when missing. Optional fields may be omitted, but if present they are still decoded and validated. |
 | `minLength`, `maxLength` | string | `STRING_MIN_LENGTH`, `STRING_MAX_LENGTH` | `bytesArg = abi.encode(uint256)` threshold. |
-| `min`, `max` | number/uint256 | `UINT_GTE_CONST`, `UINT_LTE_CONST` | `bytesArg = abi.encode(uint256)` bound. |
+| `min`, `max` | `uint256` | `UINT_GTE_CONST`, `UINT_LTE_CONST` | `bytesArg = abi.encode(uint256)` bound. |
 | `pattern` (regex) | string | not supported | Must be checked off-chain or via verifier. |
-| `step` | number/uint256 | not supported | Must be checked off-chain or via verifier. |
+| `step` | `uint256` | not supported | Must be checked off-chain or via verifier. |
 
 ### “Document” representation (whole agreement JSON)
 
@@ -77,7 +77,7 @@ This document highlights the **data transformations** needed to implement the ag
 | Category | Supported ops | What this means for the standard |
 |---|---|---|
 | Strings | min/max length; equals const; equals stored var | Basic shape + equality; no regex/pattern matching. |
-| Integers (`uint256`) | eq/gt/gte/lt/lte vs const or stored var | Standard `number` must be treated as integer. |
+| Integers (`uint256`) | eq/gt/gte/lt/lte vs const or stored var | EVM-targeted agreements should use `uint256` for integer values. |
 | Addresses | equals const; equals stored var | Role/participant checks. |
 | Sender | sender equals stored address var; sender in allowed address set | Encodes “who is allowed to submit” (or who authorized via permit). |
 

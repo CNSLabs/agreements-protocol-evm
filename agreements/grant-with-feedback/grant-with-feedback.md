@@ -31,7 +31,9 @@ stateDiagram-v2
 
 1. **Iterative Work Submission**: The state machine allows work to be submitted multiple times, with each submission incorporating feedback from the grantor.
 2. **Feedback Loop**: When work is rejected, the state returns to AWAITING_WORK_SUBMISSION instead of terminating, enabling improvements.
-3. **Final Acceptance**: Only when the grantor is satisfied with the work does the state progress to payment.
+3. **Final Acceptance**: Only when the grantor is satisfied with the work does the state progress to payment-proof submission.
+
+Payment boundary: this fixture models agreement state and a submitted payment proof. It does not custody funds or execute ETH/ERC-20 transfers natively. ERC-20 transfer execution is demonstrated separately by the auto-pay action fixtures, where a configured action calls an external token contract.
 
 ## Test Scenarios
 
@@ -66,7 +68,7 @@ Test Steps:
    - Recipient submits improved work
    - Grantor reviews and accepts
 4. Payment:
-   - Grantor sends payment
+   - Grantor submits payment proof
    - Agreement completes successfully
 
 ### 2. Agreement Rejection Path
@@ -112,7 +114,7 @@ Test Steps:
    - Recipient submits work
    - Grantor accepts immediately
 3. Payment:
-   - Grantor sends payment
+   - Grantor submits payment proof
    - Agreement completes successfully
 
 ### 4. Invalid Input Test
@@ -141,4 +143,4 @@ Test Steps:
   - `submissionHash`: Hash of the work submission content
   - `submissionUrl`: URL to access the submitted work
 - Work rejection includes mandatory feedback to guide improvements
-- The final state (WORK_ACCEPTED_AND_PAID) requires valid payment proof via transaction hash
+- The final state (WORK_ACCEPTED_AND_PAID) requires a submitted payment proof via transaction hash. The proof records a payment-related attestation; it does not execute token transfer in this fixture.

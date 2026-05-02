@@ -137,11 +137,11 @@
       },
       "AWAITING_PAYMENT": {
         "name": "Work Accepted, Awaiting Payment",
-        "description": "The work has been reviewed and accepted. Awaiting payment from grantor."
+        "description": "The work has been reviewed and accepted. Awaiting payment proof from grantor."
       },
       "WORK_ACCEPTED_AND_PAID": {
         "name": "Grant Payment Fulfilled",
-        "description": "The work has been submitted, reviewed, and payment has been successfully sent."
+        "description": "The work has been submitted, reviewed, accepted, and payment proof has been submitted."
       },
       "REJECTED": {
         "name": "Agreement Rejected",
@@ -296,7 +296,7 @@
         "type": "VerifiedCredentialEIP712",
         "schema": "verified-credential-eip712.schema.json",
         "displayName": "Work Approved and Payment Proof",
-        "description": "Grantor confirms work has been accepted and payment has been sent.",
+        "description": "Grantor submits proof that payment was handled outside this core agreement engine.",
         "data": {
            "workTokenSentTx": "${variables.workTokenSentTx}"
         },
