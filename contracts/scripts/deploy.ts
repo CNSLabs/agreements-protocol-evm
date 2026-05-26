@@ -52,6 +52,9 @@ function getExplorerBaseUrl(networkName: string) {
   if (networkName === "sepolia") {
     return "https://sepolia.etherscan.io";
   }
+  if (networkName === "baseSepolia") {
+    return "https://sepolia.basescan.org";
+  }
   return null;
 }
 
