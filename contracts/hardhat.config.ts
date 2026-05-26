@@ -9,6 +9,8 @@ dotenv.config();
 
 const lineaSepoliaRpcUrl =
   process.env.LINEA_SEPOLIA_RPC_URL || "https://rpc.sepolia.linea.build";
+const sepoliaRpcUrl =
+  process.env.SEPOLIA_RPC_URL || "https://ethereum-sepolia-rpc.publicnode.com";
 const etherscanApiKey = process.env.ETHERSCAN_API_KEY || "";
 const etherscanApiUrl = "https://api.etherscan.io/v2/api";
 const enableFork = process.env.HARDHAT_FORK === "true";
@@ -63,6 +65,11 @@ const config: HardhatUserConfig = {
       chainId: 59141,
       accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : [],
     },
+    sepolia: {
+      url: sepoliaRpcUrl,
+      chainId: 11155111,
+      accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : [],
+    },
     linea: {
       url: process.env.LINEA_RPC_URL || "https://rpc.linea.build",
       chainId: 59144,
@@ -94,6 +101,14 @@ const config: HardhatUserConfig = {
         urls: {
           apiURL: etherscanApiUrl,
           browserURL: "https://sepolia.lineascan.build",
+        },
+      },
+      {
+        network: "sepolia",
+        chainId: 11155111,
+        urls: {
+          apiURL: etherscanApiUrl,
+          browserURL: "https://sepolia.etherscan.io",
         },
       },
       {
