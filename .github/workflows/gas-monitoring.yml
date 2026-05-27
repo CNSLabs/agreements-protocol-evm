@@ -16,6 +16,8 @@ on:
 jobs:
   gas-check:
     runs-on: ubuntu-latest
+    env:
+      REPORT_GAS: "true"
     steps:
       - uses: actions/checkout@v4
 
@@ -43,6 +45,11 @@ jobs:
           BASE_REF="${{ github.base_ref }}"
           BASE_DIR="/tmp/gas-base"
 
+          cleanup() {
+            git worktree remove "${BASE_DIR}" --force 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
           git fetch origin "${BASE_REF}" --depth=1
           git worktree add "${BASE_DIR}" "origin/${BASE_REF}"
 
@@ -55,11 +62,16 @@ jobs:
           npm --prefix contracts run compile
           npm run sdk:build
           npm --prefix contracts run test
-          cp contracts/gas-report.txt "${GITHUB_WORKSPACE}/contracts/gas-report-base.txt"
+          if [ -f contracts/gas-report.txt ]; then
+            cp contracts/gas-report.txt "${GITHUB_WORKSPACE}/contracts/gas-report-base.txt"
+          else
+            echo "::warning::Base branch did not generate contracts/gas-report.txt; PR gas comment will show current report only."
+          fi
           find contracts/test -type f -name '*.ts' | sort | sed 's#^contracts/##' > "${GITHUB_WORKSPACE}/contracts/base-test-files.txt"
           popd >/dev/null
 
-          git worktree remove "${BASE_DIR}" --force
+          cleanup
+          trap - EXIT
       
       - name: Run tests and generate gas report
         working-directory: contracts
@@ -81,10 +93,17 @@ jobs:
               echo "No base-branch test files found on PR branch; running full suite."
               npm run test
             fi
-
-            cp gas-report.txt gas-report-comparison.txt
           else
             npm run test
+          fi
+
+          if [ ! -f gas-report.txt ]; then
+            echo "::error::Gas report was not generated. Ensure REPORT_GAS=true enables hardhat-gas-reporter."
+            exit 1
+          fi
+
+          if [ "${{ github.event_name }}" = "pull_request" ] && [ -f "base-test-files.txt" ]; then
+            cp gas-report.txt gas-report-comparison.txt
           fi
 
       - name: Check gas thresholds
