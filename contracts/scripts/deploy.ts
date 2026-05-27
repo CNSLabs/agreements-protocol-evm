@@ -21,7 +21,6 @@ function isLocalNetwork(networkName: string) {
 }
 
 function resolveVerificationConfig(networkName: string): VerificationConfig {
-  const verifyOverride = process.env.VERIFY_CONTRACTS;
   const skipVerification = process.env.SKIP_CONTRACT_VERIFICATION === "true";
   const hasEtherscanApiKey = (process.env.ETHERSCAN_API_KEY ?? "").trim().length > 0;
 
@@ -33,25 +32,14 @@ function resolveVerificationConfig(networkName: string): VerificationConfig {
     return { enabled: false, reason: "SKIP_CONTRACT_VERIFICATION=true" };
   }
 
-  if (verifyOverride === "true") {
-    if (hasEtherscanApiKey) {
-      return { enabled: true, reason: "VERIFY_CONTRACTS=true" };
-    }
-    return {
-      enabled: false,
-      reason: "VERIFY_CONTRACTS=true but ETHERSCAN_API_KEY is not set",
-    };
-  }
-
-  if (verifyOverride === "false") {
-    return { enabled: false, reason: "VERIFY_CONTRACTS=false" };
-  }
-
   if (hasEtherscanApiKey) {
     return { enabled: true, reason: "ETHERSCAN_API_KEY detected" };
   }
 
-  return { enabled: false, reason: "ETHERSCAN_API_KEY is not set" };
+  return {
+    enabled: false,
+    reason: "ETHERSCAN_API_KEY is not set; set SKIP_CONTRACT_VERIFICATION=true to skip intentionally",
+  };
 }
 
 function getExplorerBaseUrl(networkName: string) {
@@ -60,6 +48,15 @@ function getExplorerBaseUrl(networkName: string) {
   }
   if (networkName === "lineaSepolia") {
     return "https://sepolia.lineascan.build";
+  }
+  if (networkName === "sepolia") {
+    return "https://sepolia.etherscan.io";
+  }
+  if (networkName === "baseSepolia") {
+    return "https://sepolia.basescan.org";
+  }
+  if (networkName === "base") {
+    return "https://basescan.org";
   }
   return null;
 }
