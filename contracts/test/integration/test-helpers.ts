@@ -164,10 +164,15 @@ export async function deployProtocol(): Promise<{
     return { factory: _factory, implementation: _implementation };
   }
 
+  // Deploy the linked ActionLib (R4) and link it into the engine implementation.
+  const actionLib = await ethers.deployContract("ActionLib");
+  await actionLib.waitForDeployment();
+
   // Deploy implementation (initializers disabled in constructor)
-  _implementation = (await ethers.deployContract(
-    "AgreementEngine"
-  )) as unknown as AgreementEngine;
+  const EngineFactory = await ethers.getContractFactory("AgreementEngine", {
+    libraries: { ActionLib: await actionLib.getAddress() },
+  });
+  _implementation = (await EngineFactory.deploy()) as unknown as AgreementEngine;
   await _implementation.waitForDeployment();
 
   // Deploy factory pointing to implementation

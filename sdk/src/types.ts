@@ -11,7 +11,7 @@ import { Hex } from "viem";
 // ============================================================================
 
 /**
- * FieldType enum matching the contract
+ * FieldType enum matching the contract (AgreementTypes.FieldType).
  */
 export enum FieldType {
   UINT256 = 0,
@@ -19,10 +19,15 @@ export enum FieldType {
   ADDRESS = 2,
   BOOL = 3,
   BYTES32 = 4,
+  BYTES = 5,
 }
 
 /**
- * Op enum for conditions matching the contract
+ * Op enum for the LEGACY condition encoding. Retained only as the SDK's intermediate
+ * representation: `transformAgreementToOnChainParams` still emits these legacy `Op`
+ * conditions (and `ActionInit` actions), which the off-chain desugar (`desugar.ts`) then
+ * translates into the canonical condition / composable-call shape the engine ingests. The
+ * engine itself has NO `Op` enum on its authoring path.
  */
 export enum Op {
   // String operations
@@ -122,7 +127,11 @@ export interface ActionInit {
 }
 
 /**
- * Parameters for createAgreement contract call
+ * Parameters for the transformer's LEGACY intermediate representation.
+ * @dev `transformAgreementToOnChainParams` produces this legacy-shaped IR (legacy `Op`
+ *      conditions in `inputDefs`, `ActionInit` actions). The off-chain desugar (`desugar.ts`)
+ *      converts it into `ComposableCreateParams` — the shape the composable engine ingests.
+ *      The legacy IR is NOT sent on-chain; it is purely the SDK's compile intermediate.
  */
 export interface CreateAgreementParams {
   docUri: string;
@@ -133,6 +142,124 @@ export interface CreateAgreementParams {
   initVars: DataField[];
   verifiers: VerifierInit[];
   actions: ActionInit[];
+}
+
+// ============================================================================
+// Canonical value-resolution model (matching AgreementTypes.sol)
+// ============================================================================
+
+/** ValueSource enum matching AgreementTypes.ValueSource. */
+export enum ValueSource {
+  CONST = 0,
+  VAR = 1,
+  FIELD = 2,
+  FIELD_LENGTH = 3,
+  AUTH_SIGNER = 4,
+  CALLER = 5,
+  SELF = 6,
+  NOW = 7,
+  STATIC_CALL = 8,
+}
+
+/** CmpOp enum matching AgreementTypes.CmpOp. */
+export enum CmpOp {
+  EQ = 0,
+  NEQ = 1,
+  GT = 2,
+  GTE = 3,
+  LT = 4,
+  LTE = 5,
+  IN = 6,
+  NOT_IN = 7,
+}
+
+/** AgreementTypes.ValueRef { source, vType, data }. `data` is abi-encoded per source. */
+export interface ValueRef {
+  source: ValueSource;
+  vType: FieldType;
+  data: Hex;
+}
+
+/** AgreementTypes.Condition { left, op, skipIfAbsent, right }. */
+export interface CanonicalCondition {
+  left: ValueRef;
+  op: CmpOp;
+  skipIfAbsent: boolean; // IF_PRESENT
+  right: ValueRef[]; // 1 scalar for EQ/NEQ/ordered; N for IN/NOT_IN
+}
+
+// ============================================================================
+// Composable action model (matching ActionLib.sol)
+// ============================================================================
+
+/** ActionLib.ArgSlot { dynamic, constWord, value }. */
+export interface ArgSlot {
+  dynamic: boolean;
+  constWord: Hex; // bytes32 (baked word when !dynamic)
+  value: ValueRef; // resolved at runtime when dynamic
+}
+
+/** ActionLib.Output { returnIndex, outType, targetVar }. */
+export interface CallOutput {
+  returnIndex: bigint;
+  outType: FieldType;
+  targetVar: Hex;
+}
+
+/** ActionLib.Call { target, selector, args, constraints, outputs }. */
+export interface Call {
+  target: ValueRef;
+  selector: Hex; // bytes4
+  args: ArgSlot[];
+  constraints: CanonicalCondition[];
+  outputs: CallOutput[];
+}
+
+// ============================================================================
+// Composable init payloads (matching AgreementEngine.sol)
+// ============================================================================
+
+/** AgreementEngine.InputDef { id, fields, verifierKeys } (no conditions). */
+export interface InputDefInit {
+  id: Hex;
+  fields: InputFieldDef[];
+  verifierKeys: Hex[];
+}
+
+/** AgreementEngine.ComposableActionInit { fromState, inputId, encodedCalls }. */
+export interface ComposableActionInit {
+  fromState: Hex;
+  inputId: Hex;
+  encodedCalls: Hex; // abi.encode(Call[])
+}
+
+/** AgreementEngine.CanonicalConditionInit { inputId, encodedConditions }. */
+export interface CanonicalConditionInit {
+  inputId: Hex;
+  encodedConditions: Hex; // abi.encode(Condition[])
+}
+
+/** AgreementEngine.VerifierReg { key, verifier }. */
+export interface VerifierReg {
+  key: Hex;
+  verifier: Hex;
+}
+
+/**
+ * Parameters for the COMPOSABLE createAgreement contract call (post-desugar shape).
+ * @dev Produced by the off-chain desugar (`desugar.ts`) from the legacy IR. This is what is
+ *      sent on-chain to the composable factory entrypoints.
+ */
+export interface ComposableCreateParams {
+  docUri: string;
+  docHash: Hex;
+  initialState: Hex;
+  inputDefs: InputDefInit[];
+  transitions: Transition[];
+  initVars: DataField[];
+  actions: ComposableActionInit[];
+  canonicalConds: CanonicalConditionInit[];
+  verifiers: VerifierReg[];
 }
 
 /**

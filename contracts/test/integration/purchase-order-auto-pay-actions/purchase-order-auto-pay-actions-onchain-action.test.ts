@@ -248,9 +248,13 @@ describe(
           "payerSigning",
           sampleInputs.payerSigning
         );
-        expect.fail("Expected transaction to revert with SenderAddressMismatch");
+        expect.fail("Expected the submission to revert (wrong sender) but it succeeded");
       } catch (error: any) {
-        expect(error.message).to.include("SenderAddressMismatch");
+        // Parity is relaxed to revert semantics (the engine still REJECTS the wrong
+        // sender), not revert form: the canonical engine reverts ComparisonFailed()
+        // (AUTH_SIGNER EQ failed) rather than the legacy SenderAddressMismatch. Error
+        // identity is intentionally out of the parity contract.
+        expect(error.message).to.include("ComparisonFailed");
       }
 
       expect(await agreementAsPayer.getCurrentState(purchaseOrder)).to.equal(
@@ -326,9 +330,14 @@ describe(
           "payeeSigning",
           sampleInputs.payeeSigning
         );
-        expect.fail("Expected transaction to revert with ActionCallFailed");
+        expect.fail("Expected transaction to revert on the failed transferFrom");
       } catch (error: any) {
-        expect(error.message).to.include("ActionCallFailed");
+        // The legacy static action now desugars into one composable Call executed by
+        // ActionLib, so a failed call reverts with ActionLib's CallReverted rather than
+        // the legacy ActionCallFailed. The behavior is unchanged (atomic revert, no
+        // state advance); error identity is out of the parity contract (same relaxation
+        // applied to the wrong-sender case above).
+        expect(error.message).to.include("CallReverted");
       }
 
       // Must remain in PENDING_PAYEE_SIGNATURE due to atomic revert

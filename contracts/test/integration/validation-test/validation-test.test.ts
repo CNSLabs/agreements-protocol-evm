@@ -985,9 +985,13 @@ describe("AgreementEngine (integration) - Validation Conditions", () => {
         await agreement.submitInput(multiIssuerAgreement, "approve", {
           approvalNote: "approved",
         });
-        expect.fail("Expected transaction to revert with SenderAddressNotAllowed");
+        expect.fail("Expected the submission to revert (sender not allowed) but it succeeded");
       } catch (error: any) {
-        expect(error.message).to.include("SenderAddressNotAllowed");
+        // Parity is relaxed to revert semantics (the engine still REJECTS a sender
+        // outside the allow-set), not revert form: the canonical engine reverts
+        // ComparisonFailed() (AUTH_SIGNER IN [...] failed) rather than the legacy
+        // SenderAddressNotAllowed. Error identity is intentionally out of the parity contract.
+        expect(error.message).to.include("ComparisonFailed");
       }
     });
   });

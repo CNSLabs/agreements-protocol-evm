@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: Apache-2.0
-
 import { describe, it, expect, beforeEach } from "@jest/globals";
 import { ethers } from "ethers";
 import { AgreementFactory } from "../src/AgreementFactory.js";
@@ -163,9 +161,8 @@ describe('AgreementEngine', () => {
       ).rejects.toThrow(); // Will throw either "Signer required" or from payload building
     });
 
-    it('should have getVerifier method', () => {
-      const agreement = new AgreementEngine(agreementAddress, mockProvider);
-      expect(typeof agreement.getVerifier).toBe('function');
-    });
+    // registerVerifier was removed (owner-less governance, R8): there is no post-init
+    // verifier-registration entrypoint. Verifiers are registered AT INIT via the create
+    // path's `verifiers_` param, covered by the contract integration tests.
   });
 });

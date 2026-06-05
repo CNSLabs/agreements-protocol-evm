@@ -56,6 +56,14 @@ const config: HardhatUserConfig = {
         enabled: true,
         runs: 200,
       },
+      // Emit the compiler's storageLayout so the R3 storage-layout-stability
+      // guardrail can extract AgreementEngine's layout and diff it against a
+      // committed snapshot (append-only enforcement for EIP-1167 clones).
+      outputSelection: {
+        "*": {
+          "*": ["storageLayout"],
+        },
+      },
     },
   },
   networks: {
@@ -91,7 +99,10 @@ const config: HardhatUserConfig = {
     },
   },
   paths: {
-    sources: "./src",
+    // Compile production contracts under src/ (including the frozen legacy/ reference)
+    // and test-support contracts under test/contracts/. Source names remain rooted at
+    // the project base (e.g. src/AgreementEngine.sol), so artifact paths are unchanged.
+    sources: ".",
     tests: "./test",
     cache: "./cache",
     artifacts: "./artifacts",

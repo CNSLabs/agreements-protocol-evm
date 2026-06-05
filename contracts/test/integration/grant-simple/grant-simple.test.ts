@@ -174,9 +174,13 @@ describe("AgreementEngine (integration) - grant-simple FSM with issuer validatio
           "grantorData",
           sampleInputs.grantorData
         );
-        expect.fail("Expected SenderAddressMismatch but transaction succeeded");
+        expect.fail("Expected the submission to revert (wrong sender) but it succeeded");
       } catch (err: any) {
-        expect(String(err)).to.include("SenderAddressMismatch");
+        // Parity is relaxed to revert semantics (the engine still REJECTS the wrong
+        // sender), not revert form: the canonical engine reverts ComparisonFailed()
+        // (AUTH_SIGNER EQ failed) rather than the legacy SenderAddressMismatch. Error
+        // identity is intentionally out of the parity contract.
+        expect(String(err)).to.include("ComparisonFailed");
       }
 
       const state = await agreementForState.getCurrentState(grantSimple);
@@ -227,9 +231,13 @@ describe("AgreementEngine (integration) - grant-simple FSM with issuer validatio
           "recipientSigning",
           sampleInputs.recipientSigning
         );
-        expect.fail("Expected SenderAddressMismatch but transaction succeeded");
+        expect.fail("Expected the submission to revert (wrong sender) but it succeeded");
       } catch (err: any) {
-        expect(String(err)).to.include("SenderAddressMismatch");
+        // Parity is relaxed to revert semantics (the engine still REJECTS the wrong
+        // sender), not revert form: the canonical engine reverts ComparisonFailed()
+        // (AUTH_SIGNER EQ failed) rather than the legacy SenderAddressMismatch. Error
+        // identity is intentionally out of the parity contract.
+        expect(String(err)).to.include("ComparisonFailed");
       }
 
       const state = await agreementAsGrantor.getCurrentState(grantSimple);
@@ -287,9 +295,13 @@ describe("AgreementEngine (integration) - grant-simple FSM with issuer validatio
           "grantorSigning",
           sampleInputs.grantorSigning
         );
-        expect.fail("Expected SenderAddressMismatch but transaction succeeded");
+        expect.fail("Expected the submission to revert (wrong sender) but it succeeded");
       } catch (err: any) {
-        expect(String(err)).to.include("SenderAddressMismatch");
+        // Parity is relaxed to revert semantics (the engine still REJECTS the wrong
+        // sender), not revert form: the canonical engine reverts ComparisonFailed()
+        // (AUTH_SIGNER EQ failed) rather than the legacy SenderAddressMismatch. Error
+        // identity is intentionally out of the parity contract.
+        expect(String(err)).to.include("ComparisonFailed");
       }
 
       const state = await agreementAsRecipient.getCurrentState(grantSimple);
@@ -340,9 +352,13 @@ describe("AgreementEngine (integration) - grant-simple FSM with issuer validatio
           "grantorRejection",
           sampleInputs.grantorRejection
         );
-        expect.fail("Expected SenderAddressMismatch but transaction succeeded");
+        expect.fail("Expected the submission to revert (wrong sender) but it succeeded");
       } catch (err: any) {
-        expect(String(err)).to.include("SenderAddressMismatch");
+        // Parity is relaxed to revert semantics (the engine still REJECTS the wrong
+        // sender), not revert form: the canonical engine reverts ComparisonFailed()
+        // (AUTH_SIGNER EQ failed) rather than the legacy SenderAddressMismatch. Error
+        // identity is intentionally out of the parity contract.
+        expect(String(err)).to.include("ComparisonFailed");
       }
     });
 
@@ -391,9 +407,13 @@ describe("AgreementEngine (integration) - grant-simple FSM with issuer validatio
           "workTokenSentTx",
           sampleInputs.workTokenSentTx
         );
-        expect.fail("Expected SenderAddressMismatch but transaction succeeded");
+        expect.fail("Expected the submission to revert (wrong sender) but it succeeded");
       } catch (err: any) {
-        expect(String(err)).to.include("SenderAddressMismatch");
+        // Parity is relaxed to revert semantics (the engine still REJECTS the wrong
+        // sender), not revert form: the canonical engine reverts ComparisonFailed()
+        // (AUTH_SIGNER EQ failed) rather than the legacy SenderAddressMismatch. Error
+        // identity is intentionally out of the parity contract.
+        expect(String(err)).to.include("ComparisonFailed");
       }
 
       const state = await agreementAsGrantor.getCurrentState(grantSimple);

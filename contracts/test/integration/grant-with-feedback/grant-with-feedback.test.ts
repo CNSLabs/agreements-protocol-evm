@@ -254,9 +254,13 @@ describe("AgreementEngine (integration) - grant-with-feedback FSM", () => {
 
       try {
         await agreement.submitInput(grantWithFeedback, "workSubmission", sampleInputs.workSubmission);
-        expect.fail("Expected transaction to revert with SenderAddressMismatch");
+        expect.fail("Expected the submission to revert (wrong sender) but it succeeded");
       } catch (error: any) {
-        expect(error.message).to.include("SenderAddressMismatch");
+        // Parity is relaxed to revert semantics (the engine still REJECTS the wrong
+        // sender), not revert form: the canonical engine reverts ComparisonFailed()
+        // (AUTH_SIGNER EQ failed) rather than the legacy SenderAddressMismatch. Error
+        // identity is intentionally out of the parity contract.
+        expect(error.message).to.include("ComparisonFailed");
       }
 
       expect(await agreementForState.getCurrentState(grantWithFeedback)).to.equal("AWAITING_WORK_SUBMISSION");
@@ -305,9 +309,13 @@ describe("AgreementEngine (integration) - grant-with-feedback FSM", () => {
 
       try {
         await agreementAsRecipient.submitInput(grantWithFeedback, "workAccepted", sampleInputs.workAccepted);
-        expect.fail("Expected transaction to revert with SenderAddressMismatch");
+        expect.fail("Expected the submission to revert (wrong sender) but it succeeded");
       } catch (error: any) {
-        expect(error.message).to.include("SenderAddressMismatch");
+        // Parity is relaxed to revert semantics (the engine still REJECTS the wrong
+        // sender), not revert form: the canonical engine reverts ComparisonFailed()
+        // (AUTH_SIGNER EQ failed) rather than the legacy SenderAddressMismatch. Error
+        // identity is intentionally out of the parity contract.
+        expect(error.message).to.include("ComparisonFailed");
       }
 
       expect(await agreementForState.getCurrentState(grantWithFeedback)).to.equal("WORK_IN_REVIEW");
@@ -351,9 +359,13 @@ describe("AgreementEngine (integration) - grant-with-feedback FSM", () => {
 
       try {
         await agreementAsRecipient.submitInput(grantWithFeedback, "workResubmissionRequested", sampleInputs.workResubmissionRequested);
-        expect.fail("Expected transaction to revert with SenderAddressMismatch");
+        expect.fail("Expected the submission to revert (wrong sender) but it succeeded");
       } catch (error: any) {
-        expect(error.message).to.include("SenderAddressMismatch");
+        // Parity is relaxed to revert semantics (the engine still REJECTS the wrong
+        // sender), not revert form: the canonical engine reverts ComparisonFailed()
+        // (AUTH_SIGNER EQ failed) rather than the legacy SenderAddressMismatch. Error
+        // identity is intentionally out of the parity contract.
+        expect(error.message).to.include("ComparisonFailed");
       }
     });
 
@@ -395,9 +407,13 @@ describe("AgreementEngine (integration) - grant-with-feedback FSM", () => {
 
       try {
         await agreementAsRecipient.submitInput(grantWithFeedback, "workRejected", sampleInputs.workRejected);
-        expect.fail("Expected transaction to revert with SenderAddressMismatch");
+        expect.fail("Expected the submission to revert (wrong sender) but it succeeded");
       } catch (error: any) {
-        expect(error.message).to.include("SenderAddressMismatch");
+        // Parity is relaxed to revert semantics (the engine still REJECTS the wrong
+        // sender), not revert form: the canonical engine reverts ComparisonFailed()
+        // (AUTH_SIGNER EQ failed) rather than the legacy SenderAddressMismatch. Error
+        // identity is intentionally out of the parity contract.
+        expect(error.message).to.include("ComparisonFailed");
       }
     });
 
@@ -445,9 +461,13 @@ describe("AgreementEngine (integration) - grant-with-feedback FSM", () => {
 
       try {
         await agreementAsRecipient.submitInput(grantWithFeedback, "workTokenSentTx", sampleInputs.workTokenSentTx);
-        expect.fail("Expected transaction to revert with SenderAddressMismatch");
+        expect.fail("Expected the submission to revert (wrong sender) but it succeeded");
       } catch (error: any) {
-        expect(error.message).to.include("SenderAddressMismatch");
+        // Parity is relaxed to revert semantics (the engine still REJECTS the wrong
+        // sender), not revert form: the canonical engine reverts ComparisonFailed()
+        // (AUTH_SIGNER EQ failed) rather than the legacy SenderAddressMismatch. Error
+        // identity is intentionally out of the parity contract.
+        expect(error.message).to.include("ComparisonFailed");
       }
 
       expect(await agreementForState.getCurrentState(grantWithFeedback)).to.equal("AWAITING_PAYMENT");
