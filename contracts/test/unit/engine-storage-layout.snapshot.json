@@ -1,0 +1,484 @@
+{
+  "contract": "src/AgreementEngine.sol:AgreementEngine",
+  "storage": [
+    {
+      "label": "_status",
+      "slot": "0",
+      "offset": 0,
+      "type": {
+        "encoding": "inplace",
+        "label": "uint256",
+        "numberOfBytes": "32"
+      }
+    },
+    {
+      "label": "_nameFallback",
+      "slot": "1",
+      "offset": 0,
+      "type": {
+        "encoding": "bytes",
+        "label": "string",
+        "numberOfBytes": "32"
+      }
+    },
+    {
+      "label": "_versionFallback",
+      "slot": "2",
+      "offset": 0,
+      "type": {
+        "encoding": "bytes",
+        "label": "string",
+        "numberOfBytes": "32"
+      }
+    },
+    {
+      "label": "docUri",
+      "slot": "3",
+      "offset": 0,
+      "type": {
+        "encoding": "bytes",
+        "label": "string",
+        "numberOfBytes": "32"
+      }
+    },
+    {
+      "label": "docHash",
+      "slot": "4",
+      "offset": 0,
+      "type": {
+        "encoding": "inplace",
+        "label": "bytes32",
+        "numberOfBytes": "32"
+      }
+    },
+    {
+      "label": "initialState",
+      "slot": "5",
+      "offset": 0,
+      "type": {
+        "encoding": "inplace",
+        "label": "bytes32",
+        "numberOfBytes": "32"
+      }
+    },
+    {
+      "label": "currentState",
+      "slot": "6",
+      "offset": 0,
+      "type": {
+        "encoding": "inplace",
+        "label": "bytes32",
+        "numberOfBytes": "32"
+      }
+    },
+    {
+      "label": "owner",
+      "slot": "7",
+      "offset": 0,
+      "type": {
+        "encoding": "inplace",
+        "label": "address",
+        "numberOfBytes": "20"
+      }
+    },
+    {
+      "label": "inputDefs",
+      "slot": "8",
+      "offset": 0,
+      "type": {
+        "encoding": "mapping",
+        "label": "mapping(bytes32 => struct AgreementEngine.InputDef)",
+        "numberOfBytes": "32",
+        "key": {
+          "encoding": "inplace",
+          "label": "bytes32",
+          "numberOfBytes": "32"
+        },
+        "value": {
+          "encoding": "inplace",
+          "label": "struct AgreementEngine.InputDef",
+          "numberOfBytes": "96",
+          "members": [
+            {
+              "label": "id",
+              "slot": "0",
+              "offset": 0,
+              "type": {
+                "encoding": "inplace",
+                "label": "bytes32",
+                "numberOfBytes": "32"
+              }
+            },
+            {
+              "label": "fields",
+              "slot": "1",
+              "offset": 0,
+              "type": {
+                "encoding": "dynamic_array",
+                "label": "struct AgreementEngine.InputFieldDef[]",
+                "numberOfBytes": "32",
+                "base": {
+                  "encoding": "inplace",
+                  "label": "struct AgreementEngine.InputFieldDef",
+                  "numberOfBytes": "64",
+                  "members": [
+                    {
+                      "label": "fieldId",
+                      "slot": "0",
+                      "offset": 0,
+                      "type": {
+                        "encoding": "inplace",
+                        "label": "bytes32",
+                        "numberOfBytes": "32"
+                      }
+                    },
+                    {
+                      "label": "fType",
+                      "slot": "1",
+                      "offset": 0,
+                      "type": {
+                        "encoding": "inplace",
+                        "label": "enum AgreementTypes.FieldType",
+                        "numberOfBytes": "1"
+                      }
+                    },
+                    {
+                      "label": "required",
+                      "slot": "1",
+                      "offset": 1,
+                      "type": {
+                        "encoding": "inplace",
+                        "label": "bool",
+                        "numberOfBytes": "1"
+                      }
+                    },
+                    {
+                      "label": "persist",
+                      "slot": "1",
+                      "offset": 2,
+                      "type": {
+                        "encoding": "inplace",
+                        "label": "bool",
+                        "numberOfBytes": "1"
+                      }
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "label": "verifierKeys",
+              "slot": "2",
+              "offset": 0,
+              "type": {
+                "encoding": "dynamic_array",
+                "label": "bytes32[]",
+                "numberOfBytes": "32",
+                "base": {
+                  "encoding": "inplace",
+                  "label": "bytes32",
+                  "numberOfBytes": "32"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "label": "transitions",
+      "slot": "9",
+      "offset": 0,
+      "type": {
+        "encoding": "dynamic_array",
+        "label": "struct AgreementEngine.Transition[]",
+        "numberOfBytes": "32",
+        "base": {
+          "encoding": "inplace",
+          "label": "struct AgreementEngine.Transition",
+          "numberOfBytes": "96",
+          "members": [
+            {
+              "label": "fromState",
+              "slot": "0",
+              "offset": 0,
+              "type": {
+                "encoding": "inplace",
+                "label": "bytes32",
+                "numberOfBytes": "32"
+              }
+            },
+            {
+              "label": "toState",
+              "slot": "1",
+              "offset": 0,
+              "type": {
+                "encoding": "inplace",
+                "label": "bytes32",
+                "numberOfBytes": "32"
+              }
+            },
+            {
+              "label": "inputId",
+              "slot": "2",
+              "offset": 0,
+              "type": {
+                "encoding": "inplace",
+                "label": "bytes32",
+                "numberOfBytes": "32"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "label": "verifierRegistry",
+      "slot": "10",
+      "offset": 0,
+      "type": {
+        "encoding": "mapping",
+        "label": "mapping(bytes32 => address)",
+        "numberOfBytes": "32",
+        "key": {
+          "encoding": "inplace",
+          "label": "bytes32",
+          "numberOfBytes": "32"
+        },
+        "value": {
+          "encoding": "inplace",
+          "label": "address",
+          "numberOfBytes": "20"
+        }
+      }
+    },
+    {
+      "label": "vars",
+      "slot": "11",
+      "offset": 0,
+      "type": {
+        "encoding": "mapping",
+        "label": "mapping(bytes32 => struct ValueLib.StoredVar)",
+        "numberOfBytes": "32",
+        "key": {
+          "encoding": "inplace",
+          "label": "bytes32",
+          "numberOfBytes": "32"
+        },
+        "value": {
+          "encoding": "inplace",
+          "label": "struct ValueLib.StoredVar",
+          "numberOfBytes": "64",
+          "members": [
+            {
+              "label": "fType",
+              "slot": "0",
+              "offset": 0,
+              "type": {
+                "encoding": "inplace",
+                "label": "enum AgreementTypes.FieldType",
+                "numberOfBytes": "1"
+              }
+            },
+            {
+              "label": "data",
+              "slot": "1",
+              "offset": 0,
+              "type": {
+                "encoding": "bytes",
+                "label": "bytes",
+                "numberOfBytes": "32"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "label": "canonicalConditions",
+      "slot": "12",
+      "offset": 0,
+      "type": {
+        "encoding": "mapping",
+        "label": "mapping(bytes32 => struct AgreementTypes.Condition[])",
+        "numberOfBytes": "32",
+        "key": {
+          "encoding": "inplace",
+          "label": "bytes32",
+          "numberOfBytes": "32"
+        },
+        "value": {
+          "encoding": "dynamic_array",
+          "label": "struct AgreementTypes.Condition[]",
+          "numberOfBytes": "32",
+          "base": {
+            "encoding": "inplace",
+            "label": "struct AgreementTypes.Condition",
+            "numberOfBytes": "128",
+            "members": [
+              {
+                "label": "left",
+                "slot": "0",
+                "offset": 0,
+                "type": {
+                  "encoding": "inplace",
+                  "label": "struct AgreementTypes.ValueRef",
+                  "numberOfBytes": "64",
+                  "members": [
+                    {
+                      "label": "source",
+                      "slot": "0",
+                      "offset": 0,
+                      "type": {
+                        "encoding": "inplace",
+                        "label": "enum AgreementTypes.ValueSource",
+                        "numberOfBytes": "1"
+                      }
+                    },
+                    {
+                      "label": "vType",
+                      "slot": "0",
+                      "offset": 1,
+                      "type": {
+                        "encoding": "inplace",
+                        "label": "enum AgreementTypes.FieldType",
+                        "numberOfBytes": "1"
+                      }
+                    },
+                    {
+                      "label": "data",
+                      "slot": "1",
+                      "offset": 0,
+                      "type": {
+                        "encoding": "bytes",
+                        "label": "bytes",
+                        "numberOfBytes": "32"
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "label": "op",
+                "slot": "2",
+                "offset": 0,
+                "type": {
+                  "encoding": "inplace",
+                  "label": "enum AgreementTypes.CmpOp",
+                  "numberOfBytes": "1"
+                }
+              },
+              {
+                "label": "skipIfAbsent",
+                "slot": "2",
+                "offset": 1,
+                "type": {
+                  "encoding": "inplace",
+                  "label": "bool",
+                  "numberOfBytes": "1"
+                }
+              },
+              {
+                "label": "right",
+                "slot": "3",
+                "offset": 0,
+                "type": {
+                  "encoding": "dynamic_array",
+                  "label": "struct AgreementTypes.ValueRef[]",
+                  "numberOfBytes": "32",
+                  "base": {
+                    "encoding": "inplace",
+                    "label": "struct AgreementTypes.ValueRef",
+                    "numberOfBytes": "64",
+                    "members": [
+                      {
+                        "label": "source",
+                        "slot": "0",
+                        "offset": 0,
+                        "type": {
+                          "encoding": "inplace",
+                          "label": "enum AgreementTypes.ValueSource",
+                          "numberOfBytes": "1"
+                        }
+                      },
+                      {
+                        "label": "vType",
+                        "slot": "0",
+                        "offset": 1,
+                        "type": {
+                          "encoding": "inplace",
+                          "label": "enum AgreementTypes.FieldType",
+                          "numberOfBytes": "1"
+                        }
+                      },
+                      {
+                        "label": "data",
+                        "slot": "1",
+                        "offset": 0,
+                        "type": {
+                          "encoding": "bytes",
+                          "label": "bytes",
+                          "numberOfBytes": "32"
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "label": "nonces",
+      "slot": "13",
+      "offset": 0,
+      "type": {
+        "encoding": "mapping",
+        "label": "mapping(address => uint256)",
+        "numberOfBytes": "32",
+        "key": {
+          "encoding": "inplace",
+          "label": "address",
+          "numberOfBytes": "20"
+        },
+        "value": {
+          "encoding": "inplace",
+          "label": "uint256",
+          "numberOfBytes": "32"
+        }
+      }
+    },
+    {
+      "label": "composableActions",
+      "slot": "14",
+      "offset": 0,
+      "type": {
+        "encoding": "mapping",
+        "label": "mapping(bytes32 => mapping(bytes32 => bytes))",
+        "numberOfBytes": "32",
+        "key": {
+          "encoding": "inplace",
+          "label": "bytes32",
+          "numberOfBytes": "32"
+        },
+        "value": {
+          "encoding": "mapping",
+          "label": "mapping(bytes32 => bytes)",
+          "numberOfBytes": "32",
+          "key": {
+            "encoding": "inplace",
+            "label": "bytes32",
+            "numberOfBytes": "32"
+          },
+          "value": {
+            "encoding": "bytes",
+            "label": "bytes",
+            "numberOfBytes": "32"
+          }
+        }
+      }
+    }
+  ]
+}

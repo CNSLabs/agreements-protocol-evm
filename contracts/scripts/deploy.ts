@@ -121,9 +121,15 @@ async function main() {
   console.log("Deploying with account:", deployer.address);
   console.log("Account balance:", (await ethers.provider.getBalance(deployer.address)).toString());
 
-  // 1. Deploy AgreementEngine implementation
+  // 1. Deploy AgreementEngine implementation (with the linked ActionLib library)
   console.log("\n1. Deploying AgreementEngine implementation...");
-  const AgreementEngine = await ethers.getContractFactory("AgreementEngine");
+  const ActionLib = await ethers.getContractFactory("ActionLib");
+  const actionLib = await ActionLib.deploy();
+  await actionLib.waitForDeployment();
+  console.log("   ActionLib deployed to:", await actionLib.getAddress());
+  const AgreementEngine = await ethers.getContractFactory("AgreementEngine", {
+    libraries: { ActionLib: await actionLib.getAddress() },
+  });
   const implementation = await AgreementEngine.deploy();
   const implementationTx = await implementation.deploymentTransaction();
   await implementation.waitForDeployment();

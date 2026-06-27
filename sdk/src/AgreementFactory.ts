@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: Apache-2.0
-
 import {
   type Abi,
   type Hex,
@@ -13,22 +11,37 @@ import {
 } from 'viem';
 import { executeTransaction, readContractResult } from "./transactions.js";
 import { withSdkSpan } from "./telemetry.js";
-import { AgreementJson, FactoryConfig, InputDef, Transition, DataField, VerifierInit, ActionInit } from "./types.js";
+import {
+  AgreementJson,
+  FactoryConfig,
+  ComposableCreateParams,
+} from "./types.js";
 import { transformAgreementToOnChainParams, InitValue } from "./transformer.js";
+import { desugarToComposable } from "./desugar.js";
 import { AgreementFactoryABI } from "./generated/AgreementFactoryAbi.js";
 
 // Use inlined ABI data (works in both Node.js and browser)
 // ABI is extracted directly from contract artifacts as an array
 const factoryAbi: Abi = AgreementFactoryABI as Abi;
 
-// Must match AgreementFactory.sol exactly (PERMIT_WITH_ACTIONS_TYPEHASH)
-const PERMIT_WITH_ACTIONS_TYPE = "PermitAgreementWithActions(string docUri,bytes32 docHash,bytes32 initialState,bytes32 inputDefsHash,bytes32 transitionsHash,bytes32 initVarsHash,bytes32 verifiersHash,bytes32 actionsHash,uint256 nonce,uint256 deadline)";
-const PERMIT_WITH_ACTIONS_TYPEHASH: Hex = keccak256(stringToHex(PERMIT_WITH_ACTIONS_TYPE));
+// Must match AgreementFactory.sol exactly (PERMIT_AGREEMENT_TYPEHASH — the composable shape,
+// binding the composable actions, canonical conditions, and the verifier registrations).
+const PERMIT_AGREEMENT_TYPE = "PermitAgreement(string docUri,bytes32 docHash,bytes32 initialState,bytes32 inputDefsHash,bytes32 transitionsHash,bytes32 initVarsHash,bytes32 actionsHash,bytes32 canonicalCondsHash,bytes32 verifiersHash,uint256 nonce,uint256 deadline)";
+const PERMIT_AGREEMENT_TYPEHASH: Hex = keccak256(stringToHex(PERMIT_AGREEMENT_TYPE));
+
+/** Desugar an AgreementJson into the composable on-chain params (transform then desugar). */
+function buildComposableParams(
+  agreement: AgreementJson,
+  options?: CreateAgreementOptions
+): ComposableCreateParams {
+  return desugarToComposable(
+    transformAgreementToOnChainParams(agreement, options?.docUri, options?.initValues)
+  );
+}
 
 export type CreateAgreementOptions = {
   docUri?: string;
   initValues?: Record<string, InitValue>;
-  verifiers?: VerifierInit[];
 };
 
 export type CreateAgreementPermitSignature = {
@@ -67,7 +80,7 @@ export class AgreementFactory {
    * ```typescript
    * const factory = new AgreementFactory(
    *   { factoryAddress: "0x..." },
-   *   { publicClient, walletClient }
+   *   signer
    * );
    * ```
    */
@@ -154,8 +167,11 @@ export class AgreementFactory {
     return deployedAddress;
   }
 
-  private hashInputDefs(inputDefs: InputDef[]): Hex {
-    // Matches: keccak256(abi.encode(inputDefs_))
+  // ---- Permit array hashes (must match AgreementFactory.sol _verifyPermit) ----
+  // The contract binds each array as keccak256(abi.encode(array)) with the COMPOSABLE
+  // tuple shapes. These helpers reproduce that encoding for the EIP-712 message hashes.
+
+  private hashInputDefs(inputDefs: ComposableCreateParams["inputDefs"]): Hex {
     return keccak256(
       encodeAbiParameters(
         [
@@ -174,42 +190,16 @@ export class AgreementFactory {
                   { name: 'persist', type: 'bool' },
                 ],
               },
-              {
-                name: 'conditions',
-                type: 'tuple[]',
-                components: [
-                  { name: 'op', type: 'uint8' },
-                  { name: 'fieldId', type: 'bytes32' },
-                  { name: 'bytesArg', type: 'bytes' },
-                ],
-              },
               { name: 'verifierKeys', type: 'bytes32[]' },
             ],
           },
         ],
-        [
-          inputDefs.map((d) => ({
-            id: d.id,
-            fields: d.fields.map((f) => ({
-              fieldId: f.fieldId,
-              fType: f.fType,
-              required: f.required,
-              persist: f.persist,
-            })),
-            conditions: d.conditions.map((c) => ({
-              op: c.op,
-              fieldId: c.fieldId,
-              bytesArg: c.bytesArg,
-            })),
-            verifierKeys: d.verifierKeys,
-          })),
-        ],
+        [inputDefs],
       ),
     );
   }
 
-  private hashTransitions(transitions: Transition[]): Hex {
-    // Matches: keccak256(abi.encode(transitions_))
+  private hashTransitions(transitions: ComposableCreateParams["transitions"]): Hex {
     return keccak256(
       encodeAbiParameters(
         [
@@ -223,19 +213,12 @@ export class AgreementFactory {
             ],
           },
         ],
-        [
-          transitions.map((t) => ({
-            fromState: t.fromState,
-            toState: t.toState,
-            inputId: t.inputId,
-          })),
-        ],
+        [transitions],
       ),
     );
   }
 
-  private hashInitVars(initVars: DataField[]): Hex {
-    // Matches: keccak256(abi.encode(initVars_))
+  private hashInitVars(initVars: ComposableCreateParams["initVars"]): Hex {
     return keccak256(
       encodeAbiParameters(
         [
@@ -249,19 +232,49 @@ export class AgreementFactory {
             ],
           },
         ],
-        [
-          initVars.map((v) => ({
-            id: v.id,
-            fType: v.fType,
-            data: v.data,
-          })),
-        ],
+        [initVars],
       ),
     );
   }
 
-  private hashVerifiers(verifiers: VerifierInit[]): Hex {
-    // Matches: keccak256(abi.encode(verifiers_))
+  private hashActions(actions: ComposableCreateParams["actions"]): Hex {
+    return keccak256(
+      encodeAbiParameters(
+        [
+          {
+            type: 'tuple[]',
+            name: 'actions',
+            components: [
+              { name: 'fromState', type: 'bytes32' },
+              { name: 'inputId', type: 'bytes32' },
+              { name: 'encodedCalls', type: 'bytes' },
+            ],
+          },
+        ],
+        [actions],
+      ),
+    );
+  }
+
+  private hashCanonicalConds(conds: ComposableCreateParams["canonicalConds"]): Hex {
+    return keccak256(
+      encodeAbiParameters(
+        [
+          {
+            type: 'tuple[]',
+            name: 'conds',
+            components: [
+              { name: 'inputId', type: 'bytes32' },
+              { name: 'encodedConditions', type: 'bytes' },
+            ],
+          },
+        ],
+        [conds],
+      ),
+    );
+  }
+
+  private hashVerifiers(verifiers: ComposableCreateParams["verifiers"]): Hex {
     return keccak256(
       encodeAbiParameters(
         [
@@ -274,42 +287,7 @@ export class AgreementFactory {
             ],
           },
         ],
-        [
-          verifiers.map((v) => ({
-            key: v.key,
-            verifier: v.verifier,
-          })),
-        ],
-      ),
-    );
-  }
-
-  private hashActions(actions: ActionInit[]): Hex {
-    // Matches: keccak256(abi.encode(actions_))
-    return keccak256(
-      encodeAbiParameters(
-        [
-          {
-            type: 'tuple[]',
-            name: 'actions',
-            components: [
-              { name: 'fromState', type: 'bytes32' },
-              { name: 'inputId', type: 'bytes32' },
-              { name: 'target', type: 'address' },
-              { name: 'value', type: 'uint256' },
-              { name: 'data', type: 'bytes' },
-            ],
-          },
-        ],
-        [
-          actions.map((a) => ({
-            fromState: a.fromState,
-            inputId: a.inputId,
-            target: a.target,
-            value: a.value,
-            data: a.data,
-          })),
-        ],
+        [verifiers],
       ),
     );
   }
@@ -325,12 +303,9 @@ export class AgreementFactory {
    * 
    * @example
    * ```typescript
-   * const factory = new AgreementFactory(
-   *   { factoryAddress: "0x..." },
-   *   { publicClient, walletClient }
-   * );
+   * const factory = new AgreementFactory("0x...", signer);
    * 
-   * const { address, receipt } = await factory.createAgreement(agreementJson, {
+   * const { address, tx } = await factory.createAgreement(agreementJson, {
    *   initValues: {
    *     grantorEthAddress: "0x123...",
    *     recipientEthAddress: "0x456..."
@@ -354,12 +329,7 @@ export class AgreementFactory {
         "agreement.template_id": agreement.metadata?.templateId,
       },
       async () => {
-        const params = transformAgreementToOnChainParams(
-          agreement,
-          options?.docUri,
-          options?.initValues
-        );
-        const verifiers = options?.verifiers ?? params.verifiers;
+        const params = buildComposableParams(agreement, options);
 
         const { request } = await this.simulate('createAgreement', [
           params.docUri,
@@ -368,8 +338,9 @@ export class AgreementFactory {
           params.inputDefs,
           params.transitions,
           params.initVars,
-          verifiers,
           params.actions,
+          params.canonicalConds,
+          params.verifiers,
         ]);
 
         const receipt = await executeTransaction(
@@ -403,8 +374,10 @@ export class AgreementFactory {
   /**
    * Create an EIP-712 permit signature for creating an agreement via the factory.
    *
-   * The permit binds the full agreement creation parameters (docUri/docHash/initialState
-   * and hashes of inputDefs/transitions/initVars/verifiers/actions) plus the signer's current nonce + deadline.
+   * The permit binds the full COMPOSABLE agreement creation parameters (docUri/docHash/
+   * initialState and hashes of inputDefs/transitions/initVars/actions/canonicalConds/
+   * verifiers) plus the signer's current nonce + deadline. The verifiersHash adopts the
+   * verifier binding so a relayer cannot swap verifiers, actions, or conditions.
    *
    * @param walletClient - viem WalletClient to sign typed data (must be connected to an account)
    * @param agreement - The agreement JSON definition
@@ -428,18 +401,14 @@ export class AgreementFactory {
     const signerAddress = account.address as Hex;
     const nonce = await this.getNonce(signerAddress);
 
-    const params = transformAgreementToOnChainParams(
-      agreement,
-      options?.docUri,
-      options?.initValues,
-    );
-    const verifiers = options?.verifiers ?? params.verifiers;
+    const params = buildComposableParams(agreement, options);
 
     const inputDefsHash = this.hashInputDefs(params.inputDefs);
     const transitionsHash = this.hashTransitions(params.transitions);
     const initVarsHash = this.hashInitVars(params.initVars);
-    const verifiersHash = this.hashVerifiers(verifiers);
     const actionsHash = this.hashActions(params.actions);
+    const canonicalCondsHash = this.hashCanonicalConds(params.canonicalConds);
+    const verifiersHash = this.hashVerifiers(params.verifiers);
 
     const chainId = await this.clients.publicClient.getChainId();
     const domain = {
@@ -450,15 +419,16 @@ export class AgreementFactory {
     } as const;
 
     const types = {
-      PermitAgreementWithActions: [
+      PermitAgreement: [
         { name: "docUri", type: "string" },
         { name: "docHash", type: "bytes32" },
         { name: "initialState", type: "bytes32" },
         { name: "inputDefsHash", type: "bytes32" },
         { name: "transitionsHash", type: "bytes32" },
         { name: "initVarsHash", type: "bytes32" },
-        { name: "verifiersHash", type: "bytes32" },
         { name: "actionsHash", type: "bytes32" },
+        { name: "canonicalCondsHash", type: "bytes32" },
+        { name: "verifiersHash", type: "bytes32" },
         { name: "nonce", type: "uint256" },
         { name: "deadline", type: "uint256" },
       ],
@@ -471,23 +441,24 @@ export class AgreementFactory {
       inputDefsHash,
       transitionsHash,
       initVarsHash,
-      verifiersHash,
       actionsHash,
+      canonicalCondsHash,
+      verifiersHash,
       nonce,
       deadline: BigInt(deadline),
     } as const;
 
     // Optional sanity check: ensure our local typehash matches the contract's constant.
-    // (If this ever fails, the permit string in PERMIT_WITH_ACTIONS_TYPE is wrong.)
-    if (!PERMIT_WITH_ACTIONS_TYPEHASH) {
-      throw new Error("PERMIT_WITH_ACTIONS_TYPEHASH not initialized");
+    // (If this ever fails, the permit string in PERMIT_AGREEMENT_TYPE is wrong.)
+    if (!PERMIT_AGREEMENT_TYPEHASH) {
+      throw new Error("PERMIT_AGREEMENT_TYPEHASH not initialized");
     }
 
     const signatureHex = await walletClient.signTypedData({
       account,
       domain,
       types,
-      primaryType: "PermitAgreementWithActions",
+      primaryType: "PermitAgreement",
       message,
     });
 
@@ -522,12 +493,7 @@ export class AgreementFactory {
         "wallet.signer": signer,
       },
       async () => {
-        const params = transformAgreementToOnChainParams(
-          agreement,
-          options?.docUri,
-          options?.initValues,
-        );
-        const verifiers = options?.verifiers ?? params.verifiers;
+        const params = buildComposableParams(agreement, options);
 
         const { request } = await this.simulate('createAgreementWithPermit', [
           signer,
@@ -537,8 +503,9 @@ export class AgreementFactory {
           params.inputDefs,
           params.transitions,
           params.initVars,
-          verifiers,
           params.actions,
+          params.canonicalConds,
+          params.verifiers,
           BigInt(deadline),
           signature.v,
           signature.r,
@@ -573,13 +540,10 @@ export class AgreementFactory {
    * 
    * @example
    * ```typescript
-   * const factory = new AgreementFactory(
-   *   { factoryAddress: "0x..." },
-   *   { publicClient, walletClient }
-   * );
+   * const factory = new AgreementFactory("0x...", signer);
    * const salt = "0x1234...";
    * 
-   * const { address, receipt } = await factory.createAgreementDeterministic(
+   * const { address, tx } = await factory.createAgreementDeterministic(
    *   agreementJson,
    *   salt,
    *   { initValues: { ... } }
@@ -603,12 +567,7 @@ export class AgreementFactory {
         "agreement.template_id": agreement.metadata?.templateId,
       },
       async () => {
-        const params = transformAgreementToOnChainParams(
-          agreement,
-          options?.docUri,
-          options?.initValues
-        );
-        const verifiers = options?.verifiers ?? params.verifiers;
+        const params = buildComposableParams(agreement, options);
 
         const deterministicArgs: readonly unknown[] = [
           salt,
@@ -618,8 +577,9 @@ export class AgreementFactory {
           params.inputDefs,
           params.transitions,
           params.initVars,
-          verifiers,
           params.actions,
+          params.canonicalConds,
+          params.verifiers,
         ];
 
         const { request } = await this.simulate('createAgreementDeterministic', deterministicArgs);
@@ -664,12 +624,7 @@ export class AgreementFactory {
         "wallet.signer": signer,
       },
       async () => {
-        const params = transformAgreementToOnChainParams(
-          agreement,
-          options?.docUri,
-          options?.initValues,
-        );
-        const verifiers = options?.verifiers ?? params.verifiers;
+        const params = buildComposableParams(agreement, options);
 
         const { request } = await this.simulate('createAgreementDeterministicWithPermit', [
           signer,
@@ -680,8 +635,9 @@ export class AgreementFactory {
           params.inputDefs,
           params.transitions,
           params.initVars,
-          verifiers,
           params.actions,
+          params.canonicalConds,
+          params.verifiers,
           BigInt(deadline),
           signature.v,
           signature.r,
@@ -712,10 +668,7 @@ export class AgreementFactory {
    * 
    * @example
    * ```typescript
-   * const factory = new AgreementFactory(
-   *   { factoryAddress: "0x..." },
-   *   { publicClient, walletClient }
-   * );
+   * const factory = new AgreementFactory("0x...", provider);
    * const predictedAddress = await factory.predictAddress("0x1234...");
    * ```
    */

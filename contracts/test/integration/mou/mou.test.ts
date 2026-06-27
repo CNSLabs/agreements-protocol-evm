@@ -144,9 +144,13 @@ describe("AgreementEngine (integration) - MOU FSM", () => {
 
       try {
         await agreementAsPartyB.submitInput(mou, "partyAData", sampleInputs.partyAData);
-        expect.fail("Expected transaction to revert with SenderAddressMismatch");
+        expect.fail("Expected the submission to revert (wrong sender) but it succeeded");
       } catch (error: any) {
-        expect(error.message).to.include("SenderAddressMismatch");
+        // Parity is relaxed to revert semantics (the engine still REJECTS the wrong
+        // sender), not revert form: the canonical engine reverts ComparisonFailed()
+        // (AUTH_SIGNER EQ failed) rather than the legacy SenderAddressMismatch. Error
+        // identity is intentionally out of the parity contract.
+        expect(error.message).to.include("ComparisonFailed");
       }
 
       expect(await agreement.getCurrentState(mou)).to.equal("PENDING_PARTY_A_SIGNATURE");
@@ -187,9 +191,13 @@ describe("AgreementEngine (integration) - MOU FSM", () => {
 
       try {
         await agreement.submitInput(mou, "partyBData", sampleInputs.partyBData);
-        expect.fail("Expected transaction to revert with SenderAddressMismatch");
+        expect.fail("Expected the submission to revert (wrong sender) but it succeeded");
       } catch (error: any) {
-        expect(error.message).to.include("SenderAddressMismatch");
+        // Parity is relaxed to revert semantics (the engine still REJECTS the wrong
+        // sender), not revert form: the canonical engine reverts ComparisonFailed()
+        // (AUTH_SIGNER EQ failed) rather than the legacy SenderAddressMismatch. Error
+        // identity is intentionally out of the parity contract.
+        expect(error.message).to.include("ComparisonFailed");
       }
 
       expect(await agreementForState.getCurrentState(mou)).to.equal("PENDING_PARTY_B_SIGNATURE");
@@ -236,9 +244,13 @@ describe("AgreementEngine (integration) - MOU FSM", () => {
 
       try {
         await agreementAsPartyB.submitInput(mou, "accepted", sampleInputs.accepted);
-        expect.fail("Expected transaction to revert with SenderAddressMismatch");
+        expect.fail("Expected the submission to revert (wrong sender) but it succeeded");
       } catch (error: any) {
-        expect(error.message).to.include("SenderAddressMismatch");
+        // Parity is relaxed to revert semantics (the engine still REJECTS the wrong
+        // sender), not revert form: the canonical engine reverts ComparisonFailed()
+        // (AUTH_SIGNER EQ failed) rather than the legacy SenderAddressMismatch. Error
+        // identity is intentionally out of the parity contract.
+        expect(error.message).to.include("ComparisonFailed");
       }
 
       expect(await agreementForState.getCurrentState(mou)).to.equal("PENDING_ACCEPTANCE");
@@ -285,9 +297,13 @@ describe("AgreementEngine (integration) - MOU FSM", () => {
 
       try {
         await agreementAsPartyB.submitInput(mou, "rejected", sampleInputs.rejected);
-        expect.fail("Expected transaction to revert with SenderAddressMismatch");
+        expect.fail("Expected the submission to revert (wrong sender) but it succeeded");
       } catch (error: any) {
-        expect(error.message).to.include("SenderAddressMismatch");
+        // Parity is relaxed to revert semantics (the engine still REJECTS the wrong
+        // sender), not revert form: the canonical engine reverts ComparisonFailed()
+        // (AUTH_SIGNER EQ failed) rather than the legacy SenderAddressMismatch. Error
+        // identity is intentionally out of the parity contract.
+        expect(error.message).to.include("ComparisonFailed");
       }
 
       expect(await agreementForState.getCurrentState(mou)).to.equal("PENDING_ACCEPTANCE");

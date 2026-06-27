@@ -311,7 +311,7 @@ export class AgreementEngine {
 
   /**
    * Get the verifier address for a given key
-   * 
+   *
    * @param key - Verifier key
    * @returns The verifier contract address, or zero address if not registered
    */

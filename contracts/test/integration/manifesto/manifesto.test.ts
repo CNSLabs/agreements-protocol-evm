@@ -226,9 +226,13 @@ describe("AgreementEngine (integration) - Manifesto FSM", () => {
 
       try {
         await agreementAsAttacker.submitInput(manifesto, "deactivate", sampleInputs.deactivate);
-        expect.fail("Expected transaction to revert with SenderAddressMismatch");
+        expect.fail("Expected the submission to revert (wrong sender) but it succeeded");
       } catch (error: any) {
-        expect(error.message).to.include("SenderAddressMismatch");
+        // Parity is relaxed to revert semantics (the engine still REJECTS the wrong
+        // sender), not revert form: the canonical engine reverts ComparisonFailed()
+        // (AUTH_SIGNER EQ failed) rather than the legacy SenderAddressMismatch. Error
+        // identity is intentionally out of the parity contract.
+        expect(error.message).to.include("ComparisonFailed");
       }
 
       expect(await agreement.getCurrentState(manifesto)).to.equal("ACTIVE");
@@ -268,9 +272,13 @@ describe("AgreementEngine (integration) - Manifesto FSM", () => {
 
       try {
         await agreementAsAttacker.submitInput(manifesto, "activate", sampleInputs.activate);
-        expect.fail("Expected transaction to revert with SenderAddressMismatch");
+        expect.fail("Expected the submission to revert (wrong sender) but it succeeded");
       } catch (error: any) {
-        expect(error.message).to.include("SenderAddressMismatch");
+        // Parity is relaxed to revert semantics (the engine still REJECTS the wrong
+        // sender), not revert form: the canonical engine reverts ComparisonFailed()
+        // (AUTH_SIGNER EQ failed) rather than the legacy SenderAddressMismatch. Error
+        // identity is intentionally out of the parity contract.
+        expect(error.message).to.include("ComparisonFailed");
       }
 
       expect(await agreement.getCurrentState(manifesto)).to.equal("INACTIVE");

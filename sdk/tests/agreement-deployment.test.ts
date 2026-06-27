@@ -1,5 +1,3 @@
-// SPDX-License-Identifier: Apache-2.0
-
 /**
  * Agreement Deployment Tests
  *
@@ -24,6 +22,7 @@ import {
   getRequiredInitVars,
   buildInitVars,
 } from "../src/transformer";
+import { desugarToComposable } from "../src/desugar";
 import { AgreementJson, FieldType, Op } from "../src/types";
 import { AgreementFactoryABI } from "../src/generated/AgreementFactoryAbi.js";
 
@@ -743,7 +742,6 @@ describe("Agreement Deployment from JSON", () => {
       expect(params).toHaveProperty("inputDefs");
       expect(params).toHaveProperty("transitions");
       expect(params).toHaveProperty("initVars");
-      expect(params).toHaveProperty("verifiers");
       expect(params).toHaveProperty("actions");
 
       // InputDefs should be arrays of tuples
@@ -763,13 +761,6 @@ describe("Agreement Deployment from JSON", () => {
         params.initVars.every((v) => "id" in v && "fType" in v && "data" in v)
       ).toBe(true);
 
-      // Verifiers should be arrays of tuples (may be empty)
-      expect(
-        params.verifiers.every(
-          (v) => "key" in v && "verifier" in v
-        )
-      ).toBe(true);
-
       // Actions should be arrays of tuples (may be empty)
       expect(
         params.actions.every(
@@ -787,16 +778,15 @@ describe("Agreement Deployment from JSON", () => {
   describe("ABI compatibility", () => {
     it("should encode createAgreement calldata matching the Factory ABI", () => {
       const docUri = "ipfs://agreement/grant-simple-test";
-      const params = transformAgreementToOnChainParams(
-        grantSimpleJson,
-        docUri,
-        {
+      // The transformer emits the legacy IR; the off-chain desugar produces the COMPOSABLE
+      // params the engine ingests. createAgreement is the composable factory entrypoint.
+      const params = desugarToComposable(
+        transformAgreementToOnChainParams(grantSimpleJson, docUri, {
           grantorEthAddress: MOCK_GRANTOR_ADDRESS,
           recipientEthAddress: MOCK_RECIPIENT_ADDRESS,
-        }
+        })
       );
 
-      // createAgreement is now in AgreementFactory (EIP-1167 clone pattern)
       const calldata = encodeFunctionData({
         abi: AGREEMENT_FACTORY_ABI,
         functionName: "createAgreement",
@@ -807,14 +797,16 @@ describe("Agreement Deployment from JSON", () => {
           params.inputDefs,
           params.transitions,
           params.initVars,
-          params.verifiers,
           params.actions,
+          params.canonicalConds,
+          params.verifiers,
         ],
       });
 
-      // Factory's createAgreement signature
+      // Composable factory createAgreement signature (InputDefInit, ComposableActionInit,
+      // CanonicalConditionInit, VerifierReg).
       const selector = getFunctionSelector(
-        "createAgreement(string,bytes32,bytes32,(bytes32,(bytes32,uint8,bool,bool)[],(uint8,bytes32,bytes)[],bytes32[])[],(bytes32,bytes32,bytes32)[],(bytes32,uint8,bytes)[],(bytes32,address)[],(bytes32,bytes32,address,uint256,bytes)[])"
+        "createAgreement(string,bytes32,bytes32,(bytes32,(bytes32,uint8,bool,bool)[],bytes32[])[],(bytes32,bytes32,bytes32)[],(bytes32,uint8,bytes)[],(bytes32,bytes32,bytes)[],(bytes32,bytes)[],(bytes32,address)[])"
       );
 
       expect(calldata.startsWith(selector)).toBe(true);
@@ -823,17 +815,14 @@ describe("Agreement Deployment from JSON", () => {
 
     it("should prepare a populated transaction request for AgreementFactory", () => {
       const docUri = "ipfs://agreement/grant-simple-test";
-      const params = transformAgreementToOnChainParams(
-        grantSimpleJson,
-        docUri,
-        {
+      const params = desugarToComposable(
+        transformAgreementToOnChainParams(grantSimpleJson, docUri, {
           grantorEthAddress: MOCK_GRANTOR_ADDRESS,
           recipientEthAddress: MOCK_RECIPIENT_ADDRESS,
-        }
+        })
       );
       const factoryAddress = "0x0000000000000000000000000000000000000001";
 
-      // createAgreement is now called on AgreementFactory
       const data = encodeFunctionData({
         abi: AGREEMENT_FACTORY_ABI,
         functionName: "createAgreement",
@@ -844,8 +833,9 @@ describe("Agreement Deployment from JSON", () => {
           params.inputDefs,
           params.transitions,
           params.initVars,
-          params.verifiers,
           params.actions,
+          params.canonicalConds,
+          params.verifiers,
         ],
       });
 
