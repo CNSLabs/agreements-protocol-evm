@@ -37,3 +37,28 @@ Still v2, off-chain-registry-trusted: the on-chain gate is only as good as the E
 reads (and its writers). It does not verify a full ERC-7710 delegation chain on-chain (that is v1b / v3 in
 the design doc). What it DOES prove: the enforcement point is real, on-chain, and un-bypassable — the deny
 is no longer advisory. Local Hardhat EVM trace; no public testnet; not audited.
+
+## Architecture
+
+```mermaid
+flowchart TD
+  agent["Authorized agent<br/>(registered · reputable · attested)"]
+  attacker["Unauthorized / revoked party"]
+  resolver(["OFF-CHAIN · Erc8004AuthorityResolver<br/>advisory pre-check · skippable"])
+  entry{{"submitInput()"}}
+  agent -->|"direct"| entry
+  attacker -->|"direct RPC — skips the pre-check"| entry
+  subgraph engine["ON-CHAIN · AgreementEngine.submitInput() — enforced, un-bypassable"]
+    s1["1 · signature: ECDSA · nonce · deadline"]
+    s2["2 · SENDER_IN_ALLOWED_ADDRESSES → revert"]
+    s3["3 · IInputVerifier.verify() — MUST revert"]
+    s4["FSM transition + gated action — or REVERT"]
+    s1 --> s2 --> s3 --> s4
+  end
+  entry --> s1
+  s3 --> verifier["AuthorityInputVerifier"]
+  verifier -->|"staticcall (read)"| registry[("ERC-8004 registry<br/>registered · reputation · validation")]
+  resolver -.->|"same policy · two altitudes"| s3
+  s4 -->|"attested"| ok["ALLOW → START → DONE"]
+  s4 -->|"unauthorized / revoked"| rev["REVERT — state unchanged"]
+```
