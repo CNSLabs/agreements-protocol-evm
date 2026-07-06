@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
-import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import "@openzeppelin/contracts/utils/cryptography/SignatureChecker.sol";
 import "./MockDelegatorAccount.sol";
 
 /**
@@ -73,7 +73,9 @@ contract MockDelegationManager is EIP712 {
 
         bytes32 h = hashDelegation(d);
         if (disabled[h]) revert DelegationDisabled();
-        if (ECDSA.recover(h, signature) != d.delegator) revert BadSignature();
+        // SignatureChecker validates BOTH an EOA delegator (ecrecover) AND a smart-account delegator
+        // (ERC-1271 `isValidSignature` staticcall) — closes the D-0039 smart-account-signer leg.
+        if (!SignatureChecker.isValidSignatureNow(d.delegator, h, signature)) revert BadSignature();
         if (MockDelegatorAccount(account).owner() != d.delegator) revert WrongAccountOwner();
 
         // Caveats (the load-bearing two). `allowedTarget` is both the caveat and the actual target — a
