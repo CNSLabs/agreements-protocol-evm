@@ -12,6 +12,7 @@ export * from "./generated/AgreementFactoryAbi.js";
 export * from "./generated/AgreementEngineAbi.js";
 export * from "./types.js";
 export * from "./transformer.js";
+export * from "./package-compiler.js";
 export * from "./payload-builder.js";
 export * from "./deployments.js";
 export * from "./rpc-transport.js";
