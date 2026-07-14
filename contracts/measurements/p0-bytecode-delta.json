@@ -1,0 +1,63 @@
+{
+  "schemaVersion": "shodai.agreements.bytecode-delta/0.1",
+  "compiler": {
+    "solcVersion": "0.8.24",
+    "optimizer": {
+      "enabled": true,
+      "runs": 200
+    },
+    "viaIR": true,
+    "evmVersion": "cancun"
+  },
+  "baseline": {
+    "repository": "https://github.com/CNSLabs/agreements-protocol-evm",
+    "commit": "ee44672f6754e7a01bc7ed13f4b0b541b8d3f7b0"
+  },
+  "candidate": {
+    "repository": "https://github.com/CNSLabs/agreements-protocol-evm",
+    "commit": "f5c76f896051d035bffe97c615bac5d07db0fea3",
+    "solidityMatchesCommit": true
+  },
+  "contracts": {
+    "AgreementEngine": {
+      "baseline": {
+        "creationBytes": 18397,
+        "creationHash": "0xe80b14ff6ea87cacf1fbc3d0f23f844489dbe3f1dc6a95f842ea574cb0be4f91",
+        "runtimeBytes": 16981,
+        "runtimeHash": "0x5b34579065c5931f37f71b3da67bc7ad47aa4613e2e40b3f5b15365b00e9d0ea",
+        "eip170BytesRemaining": 7595
+      },
+      "candidate": {
+        "creationBytes": 18676,
+        "creationHash": "0x68e9a2987376b5452177526125c470a69d5bae6fd36be1a172effdcc155768ab",
+        "runtimeBytes": 17266,
+        "runtimeHash": "0xf386fbece1af7e0b768e68a66d020f29c3692890471edca22b99d9181fe944c5",
+        "eip170BytesRemaining": 7310
+      },
+      "delta": {
+        "creationBytes": 279,
+        "runtimeBytes": 285
+      }
+    },
+    "AgreementFactory": {
+      "baseline": {
+        "creationBytes": 8415,
+        "creationHash": "0xec3d6208ca00d0710731f8e3fd5a56bda5cffce21cb2c5a0f0a13d25771658c4",
+        "runtimeBytes": 7000,
+        "runtimeHash": "0x231c43094f6d3017bdc5a0f9b61fd6435b20be68506fcb9acf947ca98e70c129",
+        "eip170BytesRemaining": 17576
+      },
+      "candidate": {
+        "creationBytes": 8910,
+        "creationHash": "0xe7e1b39ee718de2d56b2c014a14c0a9f17cd07046389f1b4ea5ec30774eeb807",
+        "runtimeBytes": 7495,
+        "runtimeHash": "0xda05cea78fbded6ce543ccc00fa9299bbf43f84395d91c4e325a79851a05e193",
+        "eip170BytesRemaining": 17081
+      },
+      "delta": {
+        "creationBytes": 495,
+        "runtimeBytes": 495
+      }
+    }
+  }
+}

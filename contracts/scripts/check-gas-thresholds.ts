@@ -7,6 +7,7 @@
 
 import * as fs from "fs";
 import * as path from "path";
+import { execFileSync } from "child_process";
 
 interface MethodGasMeasurement {
   min: number | null;
@@ -56,7 +57,7 @@ function parseGasReport(): GasReport {
   // Parse the gas report - format uses · (middle dot) as separators
   // Example: |  AgreementEngine   ·  submitInput      ·      84395  ·     169673  ·     109013  ·           77  ·          -  |
   const methodRegex =
-    /\|\s+(\w+)\s+·\s+(\w+)\s+·\s+([\d-]+)\s+·\s+([\d-]+)\s+·\s+(\d+)/g;
+    /\|\s+(\w+)\s+·\s+([A-Za-z_]\w*)\s+·\s+([\d-]+)\s+·\s+([\d-]+)\s+·\s+(\d+)/g;
   let match;
 
   while ((match = methodRegex.exec(report)) !== null) {
@@ -98,6 +99,15 @@ function writeEvidence(gasReport: GasReport, failures: string[]) {
   );
   const evidence = {
     schemaVersion: "shodai.agreements.gas-gate/0.1",
+    source: {
+      repository: "https://github.com/CNSLabs/agreements-protocol-evm",
+      commit:
+        process.env.CANDIDATE_COMMIT?.trim() ||
+        execFileSync("git", ["rev-parse", "HEAD"], {
+          cwd: path.resolve(__dirname, "../.."),
+          encoding: "utf8",
+        }).trim(),
+    },
     budgets: {
       methods: METHOD_GAS_BUDGETS,
       deployments: DEPLOYMENT_GAS_BUDGETS,

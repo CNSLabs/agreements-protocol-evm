@@ -1,0 +1,92 @@
+{
+  "schemaVersion": "shodai.agreements.gas-gate/0.1",
+  "source": {
+    "repository": "https://github.com/CNSLabs/agreements-protocol-evm",
+    "commit": "f5c76f896051d035bffe97c615bac5d07db0fea3"
+  },
+  "budgets": {
+    "methods": {
+      "AgreementFactory": {
+        "createAgreement": 5750000,
+        "createAgreementWithPermit": 410000,
+        "createAgreementDeterministicWithPermit": 390000
+      },
+      "AgreementEngine": {
+        "submitInput": 335000,
+        "submitInputWithPermit": 135000
+      }
+    },
+    "deployments": {
+      "AgreementEngine": 4100000,
+      "AgreementFactory": 1900000
+    }
+  },
+  "measurements": {
+    "methods": {
+      "AgreementEngine": {
+        "submitInput": {
+          "min": 104784,
+          "max": 305777,
+          "avg": 264178
+        },
+        "submitInputWithPermit": {
+          "min": 114359,
+          "max": 120869,
+          "avg": 117614
+        }
+      },
+      "AgreementFactory": {
+        "createAgreement": {
+          "min": 240843,
+          "max": 5391402,
+          "avg": 2493473
+        },
+        "createAgreementDeterministicWithPermit": {
+          "min": 297583,
+          "max": 354436,
+          "avg": 326010
+        },
+        "createAgreementWithPermit": {
+          "min": null,
+          "max": null,
+          "avg": 370764
+        }
+      },
+      "FalseReturnERC20": {
+        "approve": {
+          "min": null,
+          "max": null,
+          "avg": 44053
+        },
+        "mint": {
+          "min": null,
+          "max": null,
+          "avg": 44042
+        }
+      },
+      "TestERC20": {
+        "approve": {
+          "min": null,
+          "max": null,
+          "avg": 45911
+        },
+        "mint": {
+          "min": null,
+          "max": null,
+          "avg": 68072
+        }
+      }
+    },
+    "deployments": {
+      "AgreementEngine": 3852058,
+      "AgreementFactory": 1713770,
+      "ExpectedSenderInputVerifier": 130283,
+      "FalseReturnERC20": 161967,
+      "MockInputVerifier": 92559,
+      "TestERC1271Signer": 201942,
+      "TestERC20": 512055
+    }
+  },
+  "result": "pass",
+  "failures": []
+}
