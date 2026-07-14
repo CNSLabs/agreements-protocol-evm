@@ -25,6 +25,8 @@
     "verify:baseSepolia": "hardhat run scripts/verify-deployment.ts --network baseSepolia",
     "verify:base": "hardhat run scripts/verify-deployment.ts --network base",
     "verify:linea": "hardhat run scripts/verify-deployment.ts --network linea",
+    "check:deployment": "hardhat run scripts/check-deployment-provenance.ts",
+    "check:lineaSepolia": "hardhat run scripts/check-deployment-provenance.ts --network lineaSepolia",
     "node": "hardhat node",
     "node:fork": "HARDHAT_FORK=true hardhat node",
     "slither": "slither . --config-file slither.config.json",
@@ -50,6 +52,6 @@
     "dotenv": "^16.3.1",
     "hardhat": "^2.19.0",
     "ts-node": "^10.9.2",
-    "typescript": "^5.3.0"
+    "typescript": "5.6.3"
   }
 }

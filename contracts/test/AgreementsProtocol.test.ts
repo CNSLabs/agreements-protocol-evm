@@ -235,7 +235,7 @@ describe("AgreementsProtocol", function () {
         [[{ id: authorizedActor, fType: 2, data: coder.encode(["address"], [actor]) }]]
       );
 
-    await expect(agreement.connect(attacker).submitInput(inputId, encodePayload(attacker.address)))
+    await expect((agreement.connect(attacker) as any).submitInput(inputId, encodePayload(attacker.address)))
       .to.be.revertedWithCustomError(implementation, "SenderAddressMismatch")
       .withArgs(attacker.address, owner.address);
     expect(await agreement.currentState()).to.equal(initialState);
@@ -303,7 +303,7 @@ describe("AgreementsProtocol", function () {
       );
 
     await expect(
-      agreement.connect(relayer).submitInputWithPermit(
+      (agreement.connect(relayer) as any).submitInputWithPermit(
         owner.address,
         inputId,
         payload,
@@ -395,10 +395,9 @@ describe("AgreementsProtocol", function () {
       deadline,
       creationSignature,
     ] as const;
-    const agreementAddress = await factory
-      .connect(relayer)
-      .createAgreementWithPermit.staticCall(...createArgs);
-    await expect(factory.connect(relayer).createAgreementWithPermit(...createArgs))
+    const factoryAsRelayer = factory.connect(relayer) as any;
+    const agreementAddress = await factoryAsRelayer.createAgreementWithPermit.staticCall(...createArgs);
+    await expect(factoryAsRelayer.createAgreementWithPermit(...createArgs))
       .to.emit(factory, "AgreementCreatedWithPermit")
       .withArgs(agreementAddress, smartSignerAddress, relayer.address);
     const agreement = await ethers.getContractAt("AgreementEngine", agreementAddress);
@@ -423,9 +422,13 @@ describe("AgreementsProtocol", function () {
       { inputId, payload, nonce: 0n, deadline }
     );
     await expect(
-      agreement
-        .connect(relayer)
-        .submitInputWithPermit(smartSignerAddress, inputId, payload, deadline, inputSignature)
+      (agreement.connect(relayer) as any).submitInputWithPermit(
+        smartSignerAddress,
+        inputId,
+        payload,
+        deadline,
+        inputSignature
+      )
     ).to.emit(agreement, "InputSubmittedWithPermit")
       .withArgs(smartSignerAddress, relayer.address, inputId);
     expect(await agreement.currentState()).to.equal(completeState);
@@ -450,7 +453,7 @@ describe("AgreementsProtocol", function () {
       deadline,
     });
     await expect(
-      factory.connect(relayer).createAgreementDeterministicWithPermit(
+      factoryAsRelayer.createAgreementDeterministicWithPermit(
         smartSignerAddress,
         salt,
         deployment.docUri,

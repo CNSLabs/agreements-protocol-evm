@@ -89,7 +89,7 @@ describe("AgreementEngine (integration/grant-with-feedback) - on-chain action (h
     await (await token.mint(grantor.address, 1000n)).wait();
 
     // Approve AgreementEngine (spender) to pull tokens
-    await (await token.connect(grantor).approve(agreementAddress, amount)).wait();
+    await (await (token.connect(grantor) as any).approve(agreementAddress, amount)).wait();
 
     // --- Work & review phase ---
     await agreementAsRecipient.submitInput(
@@ -156,16 +156,23 @@ describe("AgreementEngine (integration/grant-with-feedback) - on-chain action (h
       sampleInputs.grantorSigning
     );
     await (await token.mint(grantor.address, amount)).wait();
-    await (await token.connect(grantor).approve(agreementAddress, amount)).wait();
+    await (await (token.connect(grantor) as any).approve(agreementAddress, amount)).wait();
     await agreementAsRecipient.submitInput(
       grantSimple,
       "workSubmission",
       sampleInputs.workSubmission
     );
 
-    await expect(
-      agreementAsGrantor.submitInput(grantSimple, "workAccepted", sampleInputs.workAccepted)
-    ).to.be.rejectedWith("ActionERC20ReturnInvalid");
+    try {
+      await agreementAsGrantor.submitInput(
+        grantSimple,
+        "workAccepted",
+        sampleInputs.workAccepted
+      );
+      expect.fail("Expected false-returning token action to revert");
+    } catch (error: any) {
+      expect(error.message).to.include("ActionERC20ReturnInvalid");
+    }
     expect(await agreementAsGrantor.getCurrentState(grantSimple)).to.equal("WORK_IN_REVIEW");
     expect(await token.balanceOf(recipient.address)).to.equal(0n);
   });

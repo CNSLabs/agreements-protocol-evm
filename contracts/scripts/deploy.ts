@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { ethers, run } from "hardhat";
+import { artifacts, ethers, run } from "hardhat";
+import { execFileSync } from "child_process";
 import * as fs from "fs";
 import * as path from "path";
 
@@ -66,7 +67,7 @@ function getCodeUrl(networkName: string, address: string) {
   return explorerBaseUrl ? `${explorerBaseUrl}/address/${address}#code` : null;
 }
 
-function writeDeploymentInfo(networkName: string, deploymentInfo: Record<string, string>) {
+function writeDeploymentInfo(networkName: string, deploymentInfo: Record<string, unknown>) {
   const deploymentDir = path.join(__dirname, "../deployments");
   const networkDir = path.join(deploymentDir, networkName);
 
@@ -78,6 +79,24 @@ function writeDeploymentInfo(networkName: string, deploymentInfo: Record<string,
   fs.writeFileSync(deploymentPath, JSON.stringify(deploymentInfo, null, 2));
 
   return deploymentPath;
+}
+
+function readSourceCommit(): string {
+  const configured = process.env.SOURCE_COMMIT?.trim();
+  if (configured) return configured;
+  return execFileSync("git", ["rev-parse", "HEAD"], {
+    cwd: path.resolve(__dirname, "../.."),
+    encoding: "utf8",
+  }).trim();
+}
+
+function readProtocolPackageVersion(): string {
+  const packagePath = path.resolve(__dirname, "../../sdk/package.json");
+  const packageJson = JSON.parse(fs.readFileSync(packagePath, "utf8")) as {
+    version?: string;
+  };
+  if (!packageJson.version) throw new Error(`Missing SDK version in ${packagePath}`);
+  return packageJson.version;
 }
 
 async function verifyContract(
@@ -127,6 +146,9 @@ async function main() {
   const implementation = await AgreementEngine.deploy();
   const implementationTx = await implementation.deploymentTransaction();
   await implementation.waitForDeployment();
+  if (!implementationTx) throw new Error("AgreementEngine deployment transaction unavailable");
+  const implementationReceipt = await ethers.provider.getTransactionReceipt(implementationTx.hash);
+  if (!implementationReceipt) throw new Error("AgreementEngine deployment receipt unavailable");
   const implementationAddress = await implementation.getAddress();
   console.log("   Implementation deployed to:", implementationAddress);
 
@@ -136,6 +158,9 @@ async function main() {
   const factory = await AgreementFactory.deploy(implementationAddress);
   const factoryTx = await factory.deploymentTransaction();
   await factory.waitForDeployment();
+  if (!factoryTx) throw new Error("AgreementFactory deployment transaction unavailable");
+  const factoryReceipt = await ethers.provider.getTransactionReceipt(factoryTx.hash);
+  if (!factoryReceipt) throw new Error("AgreementFactory deployment receipt unavailable");
   const factoryAddress = await factory.getAddress();
   console.log("   Factory deployed to:", factoryAddress);
 
@@ -159,15 +184,6 @@ async function main() {
     console.log(`\n3. Skipping contract verification: ${verificationConfig.reason}`);
   }
 
-  const deploymentInfo = {
-    implementation: implementationAddress,
-    factory: factoryAddress,
-    chainId: providerNetwork.chainId.toString(),
-    network: networkName,
-    deployedAt: new Date().toISOString(),
-    deployer: deployer.address,
-  };
-
   if (verificationConfig.enabled) {
     console.log(`\n4. Contract verification enabled: ${verificationConfig.reason}`);
     implementationVerification = await verifyContract(
@@ -181,6 +197,68 @@ async function main() {
       [implementationAddress],
     );
   }
+
+  const implementationArtifact = await artifacts.readArtifact("AgreementEngine");
+  const factoryArtifact = await artifacts.readArtifact("AgreementFactory");
+  const buildInfo = await artifacts.getBuildInfo("src/AgreementEngine.sol:AgreementEngine");
+  if (!buildInfo) throw new Error("AgreementEngine build info unavailable");
+  const implementationRuntimeCode = await ethers.provider.getCode(implementationAddress);
+  const factoryRuntimeCode = await ethers.provider.getCode(factoryAddress);
+
+  const deploymentInfo = {
+    schemaVersion: "shodai.agreements.deployment-provenance/0.1",
+    protocolVersion: readProtocolPackageVersion(),
+    implementation: implementationAddress,
+    factory: factoryAddress,
+    chainId: providerNetwork.chainId.toString(),
+    network: networkName,
+    deployedAt: new Date().toISOString(),
+    deployer: deployer.address,
+    source: {
+      repository: "https://github.com/CNSLabs/agreements-protocol-evm",
+      commit: readSourceCommit(),
+    },
+    compiler: {
+      solcVersion: buildInfo.solcVersion,
+      optimizer: buildInfo.input.settings.optimizer,
+      viaIR: buildInfo.input.settings.viaIR ?? false,
+      evmVersion: buildInfo.input.settings.evmVersion,
+    },
+    artifacts: {
+      AgreementEngine: {
+        creationBytecodeHash: ethers.keccak256(implementationArtifact.bytecode),
+        deployedBytecodeTemplateHash: ethers.keccak256(implementationArtifact.deployedBytecode),
+      },
+      AgreementFactory: {
+        creationBytecodeHash: ethers.keccak256(factoryArtifact.bytecode),
+        deployedBytecodeTemplateHash: ethers.keccak256(factoryArtifact.deployedBytecode),
+      },
+    },
+    transactions: {
+      implementationDeployment: {
+        hash: implementationTx.hash,
+        blockNumber: implementationReceipt.blockNumber.toString(),
+        inputHash: ethers.keccak256(implementationTx.data),
+      },
+      factoryDeployment: {
+        hash: factoryTx.hash,
+        blockNumber: factoryReceipt.blockNumber.toString(),
+        inputHash: ethers.keccak256(factoryTx.data),
+      },
+    },
+    runtime: {
+      implementationCodeHash: ethers.keccak256(implementationRuntimeCode),
+      implementationCodeBytes: (implementationRuntimeCode.length - 2) / 2,
+      factoryCodeHash: ethers.keccak256(factoryRuntimeCode),
+      factoryCodeBytes: (factoryRuntimeCode.length - 2) / 2,
+    },
+    explorerVerification: {
+      enabled: verificationConfig.enabled,
+      reason: verificationConfig.reason,
+      implementation: implementationVerification?.status ?? "skipped",
+      factory: factoryVerification?.status ?? "skipped",
+    },
+  };
 
   const deploymentPath = writeDeploymentInfo(networkName, deploymentInfo);
   console.log("\n5. Deployment info saved to:", deploymentPath);
