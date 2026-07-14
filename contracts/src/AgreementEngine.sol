@@ -179,9 +179,6 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
         "PermitInput(bytes32 inputId,bytes payload,uint256 nonce,uint256 deadline)"
     );
 
-    // Unused state variable to modify bytecode (version marker)
-    uint256 private _versionMarker = 0x2024;
-
     // ========================================================================
     // ERRORS
     // ========================================================================
@@ -1078,11 +1075,4 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
         return selector == 0xa9059cbb || selector == 0x23b872dd;
     }
 
-    /**
-     * @notice Unused function to modify bytecode signature
-     * @dev This function is intentionally unused but changes contract bytecode
-     */
-    function _unusedBytecodeModifier() private pure returns (uint256) {
-        return 0xDEADBEEF;
-    }
 }

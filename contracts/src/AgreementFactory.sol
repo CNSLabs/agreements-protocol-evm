@@ -34,9 +34,6 @@ contract AgreementFactory is ReentrancyGuard, EIP712 {
         "PermitDeterministicAgreementWithActions(string docUri,bytes32 docHash,bytes32 initialState,bytes32 inputDefsHash,bytes32 transitionsHash,bytes32 initVarsHash,bytes32 verifiersHash,bytes32 actionsHash,bytes32 salt,address predictedAgreement,uint256 nonce,uint256 deadline)"
     );
 
-    // Unused state variable to modify bytecode (version marker)
-    uint256 private _versionMarker = 0x2024;
-
     /// @notice Emitted when a new agreement clone is deployed
     event AgreementDeployed(
         address indexed agreement,
@@ -359,11 +356,4 @@ contract AgreementFactory is ReentrancyGuard, EIP712 {
         return implementation.predictDeterministicAddress(salt, address(this));
     }
 
-    /**
-     * @notice Unused function to modify bytecode signature
-     * @dev This function is intentionally unused but changes contract bytecode
-     */
-    function _unusedBytecodeModifier() private pure returns (uint256) {
-        return 0xDEADBEEF;
-    }
 }

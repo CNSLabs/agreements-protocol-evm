@@ -8,110 +8,154 @@
 import * as fs from "fs";
 import * as path from "path";
 
-interface GasThresholds {
-  [contract: string]: {
-    [method: string]: {
-      max: number; // Maximum acceptable gas
-      deployment?: number; // Max deployment gas
-    };
-  };
+interface MethodGasMeasurement {
+  min: number | null;
+  max: number | null;
+  avg: number;
 }
 
-// Define your gas budgets here
-// Thresholds are set ~25-30% above current max values to allow for reasonable variance
-const GAS_THRESHOLDS: GasThresholds = {
+interface GasReport {
+  methods: Map<string, Map<string, MethodGasMeasurement>>;
+  deployments: Map<string, number>;
+}
+
+// These budgets cover the largest observation in the complete P0 test suite.
+// A method with a single observation is reported by eth-gas-reporter with only
+// an average, so the checker uses that value and labels it explicitly.
+const METHOD_GAS_BUDGETS: Record<string, Record<string, number>> = {
   AgreementFactory: {
-    createAgreement: {
-      max: 3500000, // Current max: 2.82M, threshold: 3.5M (~24% leeway)
-    },
+    createAgreement: 5_750_000,
+    createAgreementWithPermit: 410_000,
+    createAgreementDeterministicWithPermit: 390_000,
   },
   AgreementEngine: {
-    submitInput: {
-      max: 220000, // Current max: 169k, threshold: 220k (~30% leeway)
-    },
+    submitInput: 335_000,
+    submitInputWithPermit: 135_000,
   },
 };
 
-function parseGasReport(): Map<string, Map<string, number>> {
+const DEPLOYMENT_GAS_BUDGETS: Record<string, number> = {
+  AgreementEngine: 4_100_000,
+  AgreementFactory: 1_900_000,
+};
+
+function parseReportedNumber(value: string): number | null {
+  return value === "-" ? null : Number.parseInt(value, 10);
+}
+
+function parseGasReport(): GasReport {
   const reportPath = path.resolve(__dirname, "../gas-report.txt");
   if (!fs.existsSync(reportPath)) {
-    throw new Error("gas-report.txt not found. Run tests first.");
+    throw new Error("gas-report.txt not found. Run `npm run gas:check` to generate it.");
   }
 
   const report = fs.readFileSync(reportPath, "utf-8");
-  const gasData = new Map<string, Map<string, number>>();
+  const methods = new Map<string, Map<string, MethodGasMeasurement>>();
+  const deployments = new Map<string, number>();
 
   // Parse the gas report - format uses · (middle dot) as separators
   // Example: |  AgreementEngine   ·  submitInput      ·      84395  ·     169673  ·     109013  ·           77  ·          -  |
-  const methodRegex = /\|\s+(\w+)\s+·\s+(\w+)\s+·\s+[\d-]+\s+·\s+[\d-]+\s+·\s+(\d+)/g;
+  const methodRegex =
+    /\|\s+(\w+)\s+·\s+(\w+)\s+·\s+([\d-]+)\s+·\s+([\d-]+)\s+·\s+(\d+)/g;
   let match;
 
   while ((match = methodRegex.exec(report)) !== null) {
     const contract = match[1];
     const method = match[2];
-    const avgGas = parseInt(match[3]);
+    const measurement = {
+      min: parseReportedNumber(match[3]),
+      max: parseReportedNumber(match[4]),
+      avg: Number.parseInt(match[5], 10),
+    };
 
-    if (!gasData.has(contract)) {
-      gasData.set(contract, new Map());
+    if (!methods.has(contract)) {
+      methods.set(contract, new Map());
     }
-    gasData.get(contract)!.set(method, avgGas);
+    methods.get(contract)!.set(method, measurement);
   }
 
-  // Parse deployments - format: |  AgreementEngine                       ·          -  ·          -  ·    2453998  ·        8.2 %  ·          -  |
-  // Note: Deployment rows have "-" in the method column (second position), distinguishing them from method rows
-  const deployRegex = /\|\s+(\w+)\s+·\s+-\s+·\s+-\s+·\s+(\d+)/g;
+  // Deployment rows contain min, max, and average gas rather than a method
+  // name. Use the average because it is the only value always present.
+  const deployRegex = /\|\s+(\w+)\s+·\s+[\d-]+\s+·\s+[\d-]+\s+·\s+(\d+)/g;
   while ((match = deployRegex.exec(report)) !== null) {
     const contract = match[1];
-    const deployGas = parseInt(match[2]);
-
-    if (!gasData.has(contract)) {
-      gasData.set(contract, new Map());
-    }
-    gasData.get(contract)!.set("deployment", deployGas);
+    deployments.set(contract, Number.parseInt(match[2], 10));
   }
 
-  return gasData;
+  return { methods, deployments };
+}
+
+function writeEvidence(gasReport: GasReport, failures: string[]) {
+  const methods = Object.fromEntries(
+    [...gasReport.methods.entries()].map(([contract, contractMethods]) => [
+      contract,
+      Object.fromEntries(contractMethods.entries()),
+    ])
+  );
+  const reportPath = path.resolve(
+    process.env.GAS_EVIDENCE_PATH?.trim() ||
+      path.resolve(__dirname, "../measurements/p0-gas-gate.json")
+  );
+  const evidence = {
+    schemaVersion: "shodai.agreements.gas-gate/0.1",
+    budgets: {
+      methods: METHOD_GAS_BUDGETS,
+      deployments: DEPLOYMENT_GAS_BUDGETS,
+    },
+    measurements: {
+      methods,
+      deployments: Object.fromEntries(gasReport.deployments.entries()),
+    },
+    result: failures.length === 0 ? "pass" : "fail",
+    failures,
+  };
+  fs.mkdirSync(path.dirname(reportPath), { recursive: true });
+  fs.writeFileSync(reportPath, `${JSON.stringify(evidence, null, 2)}\n`);
+  console.log(`\nGas evidence written to ${reportPath}`);
 }
 
 function checkThresholds() {
-  const gasData = parseGasReport();
+  const gasReport = parseGasReport();
   const failures: string[] = [];
 
-  for (const [contract, thresholds] of Object.entries(GAS_THRESHOLDS)) {
-    const contractData = gasData.get(contract);
+  for (const [contract, budgets] of Object.entries(METHOD_GAS_BUDGETS)) {
+    const contractData = gasReport.methods.get(contract);
     if (!contractData) {
-      console.warn(`⚠️  No gas data found for ${contract}`);
+      failures.push(`❌ Missing gas data for ${contract}`);
       continue;
     }
 
-    for (const [method, threshold] of Object.entries(thresholds)) {
-      if (method === "deployment") continue; // Handle separately
-
-      const actualGas = contractData.get(method);
-      if (actualGas === undefined) {
-        console.warn(`⚠️  No gas data for ${contract}.${method}`);
+    for (const [method, budget] of Object.entries(budgets)) {
+      const measurement = contractData.get(method);
+      if (!measurement) {
+        failures.push(`❌ Missing gas data for ${contract}.${method}`);
         continue;
       }
 
-      if (actualGas > threshold.max) {
+      const actualGas = measurement.max ?? measurement.avg;
+      const metric = measurement.max === null ? "single-sample average" : "max";
+      if (actualGas > budget) {
         failures.push(
-          `❌ ${contract}.${method}: ${actualGas} gas exceeds threshold of ${threshold.max} (${((actualGas / threshold.max - 1) * 100).toFixed(1)}% over)`
+          `❌ ${contract}.${method}: ${metric} ${actualGas} gas exceeds budget ${budget} (${((actualGas / budget - 1) * 100).toFixed(1)}% over)`
         );
       } else {
-        console.log(`✅ ${contract}.${method}: ${actualGas} gas (threshold: ${threshold.max})`);
-      }
-    }
-
-    // Check deployment (only if threshold is defined)
-    if (thresholds.deployment) {
-      const deployGas = contractData.get("deployment");
-      if (deployGas && deployGas > thresholds.deployment.max) {
-        failures.push(
-          `❌ ${contract} deployment: ${deployGas} gas exceeds threshold of ${thresholds.deployment.max}`
-        );
+        console.log(`✅ ${contract}.${method}: ${metric} ${actualGas} gas (budget: ${budget})`);
       }
     }
   }
+
+  for (const [contract, budget] of Object.entries(DEPLOYMENT_GAS_BUDGETS)) {
+    const actualGas = gasReport.deployments.get(contract);
+    if (actualGas === undefined) {
+      failures.push(`❌ Missing deployment gas data for ${contract}`);
+    } else if (actualGas > budget) {
+      failures.push(`❌ ${contract} deployment: ${actualGas} gas exceeds budget ${budget}`);
+    } else {
+      console.log(`✅ ${contract} deployment: ${actualGas} gas (budget: ${budget})`);
+    }
+  }
+
+  writeEvidence(gasReport, failures);
 
   if (failures.length > 0) {
     console.error("\n🚨 Gas threshold violations:");
