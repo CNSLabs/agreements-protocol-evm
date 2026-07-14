@@ -16,7 +16,8 @@ interface IInputVerifier {
      * @param agreement  Address of the agreement clone contract.
      * @param inputId    Logical input id for this submission.
      * @param payload    Raw bytes passed to submitInput (e.g. abi.encode(DataField[])).
-     * @param sender     msg.sender of submitInput.
+     * @param sender     Effective authorizing actor: msg.sender for a direct
+     *                   submission, or the permit signer for a relayed one.
      */
     function verify(
         address agreement,
@@ -321,21 +322,21 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
         // 2. Structural checks
         _validateFields(def, fields);
 
-        // 3. Persist any fields that have persist = true (before condition validation)
-        _persistFields(def, fields);
-
-        // 4. Built-in condition checks (no permit signer, so uses msg.sender)
+        // 3. Authorize against the pre-submission state.
         _validateConditions(def, fields, address(0));
 
-        // 5. External verifiers
-        _runVerifiers(def, inputId, payload);
+        // 4. External verifiers receive the effective authorizing actor.
+        _runVerifiers(def, inputId, payload, msg.sender);
 
-        // 6. FSM transition
+        // 5. Resolve the transition before writing submission data.
         bytes32 from = currentState;
         (bool found, bytes32 to) = _findTransition(from, inputId);
         require(found, "No valid transition");
 
-        // 7. Update state (action reads may expect updated state; revert will roll this back)
+        // 6. Persist only after every authorization check has succeeded.
+        _persistFields(def, fields);
+
+        // 7. Update state (action reads may expect updated state; revert will roll this back).
         currentState = to;
 
         // 8. Optional action (atomic with transition)
@@ -401,19 +402,20 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
         // Validate fields
         _validateFields(def, fields);
         
-        // Persist fields
-        _persistFields(def, fields);
-        
-        // Validate conditions - when using permit, SENDER_EQ_VAR_ADDRESS checks the signer, not msg.sender
+        // Authorize against the pre-submission state. For permits, sender
+        // conditions check the signer rather than the relayer.
         _validateConditions(def, fields, signer);
         
-        // Run verifiers (they receive msg.sender as the sender parameter)
-        _runVerifiers(def, inputId, payload);
+        // Verifiers must see the same effective actor as built-in conditions.
+        _runVerifiers(def, inputId, payload, signer);
         
         // FSM transition
         bytes32 from = currentState;
         (bool found, bytes32 to) = _findTransition(from, inputId);
         require(found, "No valid transition");
+
+        // Persist only after every authorization check has succeeded.
+        _persistFields(def, fields);
         
         // Update state (revert will roll back)
         currentState = to;
@@ -568,7 +570,8 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
     function _runVerifiers(
         InputDef storage def,
         bytes32 inputId,
-        bytes calldata payload
+        bytes calldata payload,
+        address effectiveSender
     ) internal view {
         for (uint256 i = 0; i < def.verifierKeys.length; i++) {
             bytes32 key = def.verifierKeys[i];
@@ -580,7 +583,7 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
                 address(this),  // Clone address as agreement identifier
                 inputId,
                 payload,
-                msg.sender
+                effectiveSender
             );
         }
     }

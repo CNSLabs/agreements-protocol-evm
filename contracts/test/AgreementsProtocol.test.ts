@@ -184,6 +184,143 @@ describe("AgreementsProtocol", function () {
       .withArgs(unknownVerifierKey);
   });
 
+  it("authorizes against stored state before persisting submitted fields", async function () {
+    const { owner, implementation, factory } = await deployProtocol();
+    const [, attacker] = await ethers.getSigners();
+    const coder = ethers.AbiCoder.defaultAbiCoder();
+    const authorizedActor = ethers.keccak256(ethers.toUtf8Bytes("authorizedActor"));
+    const inputId = ethers.keccak256(ethers.toUtf8Bytes("replaceAuthorizedActor"));
+    const initialState = ethers.keccak256(ethers.toUtf8Bytes("INITIAL"));
+    const completeState = ethers.keccak256(ethers.toUtf8Bytes("COMPLETE"));
+    const inputDefs = [
+      {
+        id: inputId,
+        fields: [
+          { fieldId: authorizedActor, fType: 2, required: true, persist: true },
+        ],
+        conditions: [
+          { op: 16, fieldId: authorizedActor, bytesArg: "0x" },
+        ],
+        verifierKeys: [],
+      },
+    ];
+    const transitions = [
+      { fromState: initialState, toState: completeState, inputId },
+    ];
+    const initVars = [
+      { id: authorizedActor, fType: 2, data: coder.encode(["address"], [owner.address]) },
+    ];
+    const agreementAddress = await factory.createAgreement.staticCall(
+      "ipfs://agreement/auth-before-write",
+      ethers.keccak256(ethers.toUtf8Bytes("auth-before-write")),
+      initialState,
+      inputDefs,
+      transitions,
+      initVars,
+      [],
+      []
+    );
+    await factory.createAgreement(
+      "ipfs://agreement/auth-before-write",
+      ethers.keccak256(ethers.toUtf8Bytes("auth-before-write")),
+      initialState,
+      inputDefs,
+      transitions,
+      initVars,
+      [],
+      []
+    );
+    const agreement = await ethers.getContractAt("AgreementEngine", agreementAddress);
+    const encodePayload = (actor: string) =>
+      coder.encode(
+        ["tuple(bytes32 id,uint8 fType,bytes data)[]"],
+        [[{ id: authorizedActor, fType: 2, data: coder.encode(["address"], [actor]) }]]
+      );
+
+    await expect(agreement.connect(attacker).submitInput(inputId, encodePayload(attacker.address)))
+      .to.be.revertedWithCustomError(implementation, "SenderAddressMismatch")
+      .withArgs(attacker.address, owner.address);
+    expect(await agreement.currentState()).to.equal(initialState);
+
+    await expect(agreement.submitInput(inputId, encodePayload(owner.address)))
+      .to.emit(agreement, "InputAccepted");
+    expect(await agreement.currentState()).to.equal(completeState);
+  });
+
+  it("passes the permit signer, not the relayer, to input verifiers", async function () {
+    const { owner, factory } = await deployProtocol();
+    const [, relayer] = await ethers.getSigners();
+    const verifier = await ethers.deployContract("ExpectedSenderInputVerifier", [owner.address]);
+    await verifier.waitForDeployment();
+    const verifierKey = ethers.keccak256(ethers.toUtf8Bytes("effective-signer"));
+    const inputId = ethers.keccak256(ethers.toUtf8Bytes("verified-input"));
+    const initialState = ethers.keccak256(ethers.toUtf8Bytes("INITIAL"));
+    const completeState = ethers.keccak256(ethers.toUtf8Bytes("COMPLETE"));
+    const inputDefs = [
+      { id: inputId, fields: [], conditions: [], verifierKeys: [verifierKey] },
+    ];
+    const agreementAddress = await factory.createAgreement.staticCall(
+      "ipfs://agreement/effective-signer",
+      ethers.keccak256(ethers.toUtf8Bytes("effective-signer")),
+      initialState,
+      inputDefs,
+      [{ fromState: initialState, toState: completeState, inputId }],
+      [],
+      [{ key: verifierKey, verifier: await verifier.getAddress() }],
+      []
+    );
+    await factory.createAgreement(
+      "ipfs://agreement/effective-signer",
+      ethers.keccak256(ethers.toUtf8Bytes("effective-signer")),
+      initialState,
+      inputDefs,
+      [{ fromState: initialState, toState: completeState, inputId }],
+      [],
+      [{ key: verifierKey, verifier: await verifier.getAddress() }],
+      []
+    );
+    const agreement = await ethers.getContractAt("AgreementEngine", agreementAddress);
+    const payload = ethers.AbiCoder.defaultAbiCoder().encode(
+      ["tuple(bytes32 id,uint8 fType,bytes data)[]"],
+      [[]]
+    );
+    const deadline = (await ethers.provider.getBlock("latest"))!.timestamp + 3600;
+    const network = await ethers.provider.getNetwork();
+    const signature = ethers.Signature.from(
+      await owner.signTypedData(
+        {
+          name: "AgreementEngine",
+          version: "1",
+          chainId: network.chainId,
+          verifyingContract: agreementAddress,
+        },
+        {
+          PermitInput: [
+            { name: "inputId", type: "bytes32" },
+            { name: "payload", type: "bytes" },
+            { name: "nonce", type: "uint256" },
+            { name: "deadline", type: "uint256" },
+          ],
+        },
+        { inputId, payload, nonce: 0n, deadline }
+      )
+    );
+
+    await expect(
+      agreement.connect(relayer).submitInputWithPermit(
+        owner.address,
+        inputId,
+        payload,
+        deadline,
+        signature.v,
+        signature.r,
+        signature.s
+      )
+    ).to.emit(agreement, "InputSubmittedWithPermit")
+      .withArgs(owner.address, relayer.address, inputId);
+    expect(await agreement.currentState()).to.equal(completeState);
+  });
+
   it("binds deterministic permits to the package digest and exact clone identity", async function () {
     const { owner, implementation, factory } = await deployProtocol();
     const [, relayer] = await ethers.getSigners();
