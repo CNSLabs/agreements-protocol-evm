@@ -27,6 +27,8 @@
     "lint": "tsc --noEmit",
     "test": "jest",
     "test:watch": "jest --watch",
+    "proof:p0:linea": "tsx scripts/prove-p0-linea.ts",
+    "check:p0:linea": "tsx scripts/check-p0-linea-proof.ts",
     "clean": "rm -rf dist",
     "prepublishOnly": "npm run build"
   },
