@@ -109,5 +109,64 @@ describe("AgreementEngine (integration/grant-with-feedback) - on-chain action (h
     const recipientBalAfter = await token.balanceOf(recipient.address);
     expect(recipientBalAfter - recipientBalBefore).to.equal(amount);
   });
-});
 
+  it("rejects an ERC-20 transferFrom that returns false and leaves the agreement unpaid", async () => {
+    const [grantor, recipient] = await ethers.getSigners();
+    const token = await ethers.deployContract("FalseReturnERC20");
+    await token.waitForDeployment();
+    const amount = 100n;
+
+    const { factory: deployedFactory } = await deployProtocol();
+    const { publicClient: grantorPublic, walletClient: grantorWallet } =
+      await createViemClientsForSigner(grantor);
+    const { publicClient: recipientPublic, walletClient: recipientWallet } =
+      await createViemClientsForSigner(recipient);
+    const factory = new AgreementFactoryClass(
+      { factoryAddress: (await deployedFactory.getAddress()) as Address },
+      { walletClient: grantorWallet, publicClient: grantorPublic }
+    );
+    const { address: agreementAddress } = await factory.createAgreement(grantSimple, {
+      initValues: {
+        grantorEthAddress: grantor.address as Address,
+        recipientEthAddress: recipient.address as Address,
+        workTokenAddress: await token.getAddress(),
+        paymentAmount: amount,
+      },
+    });
+    const agreementAsGrantor = new AgreementEngineClass(
+      agreementAddress,
+      grantorPublic,
+      grantorWallet
+    );
+    const agreementAsRecipient = new AgreementEngineClass(
+      agreementAddress,
+      recipientPublic,
+      recipientWallet
+    );
+
+    await agreementAsGrantor.submitInput(grantSimple, "grantorData", sampleInputs.grantorData);
+    await agreementAsRecipient.submitInput(
+      grantSimple,
+      "recipientSigning",
+      sampleInputs.recipientSigning
+    );
+    await agreementAsGrantor.submitInput(
+      grantSimple,
+      "grantorSigning",
+      sampleInputs.grantorSigning
+    );
+    await (await token.mint(grantor.address, amount)).wait();
+    await (await token.connect(grantor).approve(agreementAddress, amount)).wait();
+    await agreementAsRecipient.submitInput(
+      grantSimple,
+      "workSubmission",
+      sampleInputs.workSubmission
+    );
+
+    await expect(
+      agreementAsGrantor.submitInput(grantSimple, "workAccepted", sampleInputs.workAccepted)
+    ).to.be.rejectedWith("ActionERC20ReturnInvalid");
+    expect(await agreementAsGrantor.getCurrentState(grantSimple)).to.equal("WORK_IN_REVIEW");
+    expect(await token.balanceOf(recipient.address)).to.equal(0n);
+  });
+});

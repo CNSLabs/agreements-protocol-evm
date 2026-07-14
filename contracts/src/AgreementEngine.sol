@@ -197,6 +197,8 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
     error InvalidNonce(address signer, uint256 provided, uint256 expected);
     error ActionTargetZero();
     error ActionCallFailed(address target, bytes revertData);
+    error ActionTargetHasNoCode(address target);
+    error ActionERC20ReturnInvalid(address target, bytes returnData);
     error VerifierZero();
     error DuplicateVerifier(bytes32 key);
     error UnknownVerifier(bytes32 key);
@@ -1040,11 +1042,41 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
         Action storage a = actions[fromState][inputId];
         if (!a.exists) return;
 
+        bytes memory callData = a.data;
+        bool isERC20Transfer = _isERC20TransferCall(callData);
+        if (isERC20Transfer && a.target.code.length == 0) {
+            revert ActionTargetHasNoCode(a.target);
+        }
+
         // slither-disable-next-line arbitrary-send-eth
-        (bool ok, bytes memory ret) = a.target.call{value: a.value}(a.data);
+        (bool ok, bytes memory ret) = a.target.call{value: a.value}(callData);
         if (!ok) revert ActionCallFailed(a.target, ret);
+        if (isERC20Transfer && ret.length != 0) {
+            if (ret.length != 32) revert ActionERC20ReturnInvalid(a.target, ret);
+
+            uint256 result;
+            assembly ("memory-safe") {
+                result := mload(add(ret, 32))
+            }
+            if (result != 1) revert ActionERC20ReturnInvalid(a.target, ret);
+        }
 
         emit ActionExecuted(fromState, toState, inputId, a.target);
+    }
+
+    /**
+     * @dev Apply SafeERC20-style optional-return checks to the two ERC-20
+     * transfer selectors without imposing boolean-return semantics on generic
+     * agreement actions such as registry or attestation calls.
+     */
+    function _isERC20TransferCall(bytes memory data) private pure returns (bool) {
+        if (data.length < 4) return false;
+
+        bytes4 selector;
+        assembly ("memory-safe") {
+            selector := mload(add(data, 32))
+        }
+        return selector == 0xa9059cbb || selector == 0x23b872dd;
     }
 
     /**
