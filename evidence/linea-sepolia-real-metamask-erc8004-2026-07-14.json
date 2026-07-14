@@ -1,0 +1,96 @@
+{
+  "schemaVersion": 1,
+  "capturedAt": "2026-07-14T02:59:24Z",
+  "result": "PASS",
+  "network": "lineaSepolia",
+  "chainId": 59141,
+  "source": "contracts/scripts/real-metamask-erc8004-live.ts",
+  "versions": {
+    "smartAccountsKit": "1.6.0",
+    "erc8004IdentityRegistry": "2.0.0",
+    "erc8004ReputationRegistry": "2.0.0"
+  },
+  "actors": {
+    "owner": "0x60D84A7dBF7e7a80725655BDAB7991B4755Ce8d6",
+    "delegate": "0x7e3Ec8FC4b8D1f77582f7F5f7B7e151AEBf9710e"
+  },
+  "addresses": {
+    "delegationManager": "0xdb9B1e94B5b69Df7e401DDbedE43491141047dB3",
+    "smartAccount": "0x2bFbC28214D6ff0C9103963545ca30bd533Cb077",
+    "engineImplementation": "0x0522e68E04D138162E7FFe5d463Ee34D4EaDfb82",
+    "agreementFactory": "0xF3075464adE850EB753Fc04a625d35498488ce11",
+    "agreement": "0xc5E912DDC58AEb998E389E086C96f3E6A250c5Dd",
+    "identityRegistry": "0x8004A818BFB912233c491871b3d84c89A494BD9e",
+    "reputationRegistry": "0x8004B663056A597Dffe9eCcC1965A193B7388713",
+    "erc8004AgentId": "0",
+    "erc8004ClientAddress": "0xc5E912DDC58AEb998E389E086C96f3E6A250c5Dd"
+  },
+  "negativeSimulations": {
+    "directCallRejected": true,
+    "wrongCalldataRejected": true
+  },
+  "lifecycleReceipt": {
+    "feedbackIndex": "1",
+    "value": "1",
+    "valueDecimals": 0,
+    "tag1": "agreement-lifecycle",
+    "tag2": "milestone-accepted",
+    "isRevoked": false
+  },
+  "sameTransactionEvents": [
+    "InputAccepted",
+    "ActionExecuted",
+    "NewFeedback"
+  ],
+  "transactions": {
+    "smartAccountDeployment": {
+      "hash": "0xe1d4d7268f2d5520e767f85b3bb7f5ca04928052ac088fe59e4616cfbb61d958",
+      "url": "https://sepolia.lineascan.build/tx/0xe1d4d7268f2d5520e767f85b3bb7f5ca04928052ac088fe59e4616cfbb61d958",
+      "blockNumber": 30842233,
+      "timestamp": "2026-07-14T02:58:40Z",
+      "status": "success"
+    },
+    "delegateFunding": {
+      "hash": "0xc3f67e157423f8f25f380ab6522f9cd98fc6be28df469005da493241a8de7e0e",
+      "url": "https://sepolia.lineascan.build/tx/0xc3f67e157423f8f25f380ab6522f9cd98fc6be28df469005da493241a8de7e0e",
+      "blockNumber": 30842234,
+      "timestamp": "2026-07-14T02:58:44Z",
+      "status": "success"
+    },
+    "agentRegistration": {
+      "hash": "0x202894adff1c89dd96c2e889be3d410a7bc737f5c2c39d4c7aa5fed1c886c3ab",
+      "url": "https://sepolia.lineascan.build/tx/0x202894adff1c89dd96c2e889be3d410a7bc737f5c2c39d4c7aa5fed1c886c3ab",
+      "blockNumber": 30842235,
+      "timestamp": "2026-07-14T02:58:48Z",
+      "status": "success"
+    },
+    "engineDeployment": {
+      "hash": "0x051bce98ab63d959eaac755ed0dc48f9b66c93442b2064b0c517f77aad07d5de",
+      "url": "https://sepolia.lineascan.build/tx/0x051bce98ab63d959eaac755ed0dc48f9b66c93442b2064b0c517f77aad07d5de",
+      "blockNumber": 30842236,
+      "timestamp": "2026-07-14T02:58:51Z",
+      "status": "success"
+    },
+    "factoryDeployment": {
+      "hash": "0x9dbdb965e97433eb8a5fb13224b54b160f2a01a0e9b444cdc1bd4ec88d01358f",
+      "url": "https://sepolia.lineascan.build/tx/0x9dbdb965e97433eb8a5fb13224b54b160f2a01a0e9b444cdc1bd4ec88d01358f",
+      "blockNumber": 30842237,
+      "timestamp": "2026-07-14T02:58:55Z",
+      "status": "success"
+    },
+    "agreementCreation": {
+      "hash": "0x0deac21512c07ae3b5c1bf3ceb5f09b3c21259fec4fe4d7c4748f6d6133d6dee",
+      "url": "https://sepolia.lineascan.build/tx/0x0deac21512c07ae3b5c1bf3ceb5f09b3c21259fec4fe4d7c4748f6d6133d6dee",
+      "blockNumber": 30842238,
+      "timestamp": "2026-07-14T02:58:59Z",
+      "status": "success"
+    },
+    "composition": {
+      "hash": "0x83eb1b96a9009985cf1c36815efc8a573559c6a78574310415215e805b3b193e",
+      "url": "https://sepolia.lineascan.build/tx/0x83eb1b96a9009985cf1c36815efc8a573559c6a78574310415215e805b3b193e",
+      "blockNumber": 30842239,
+      "timestamp": "2026-07-14T02:59:03Z",
+      "status": "success"
+    }
+  }
+}
