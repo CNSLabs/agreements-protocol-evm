@@ -27,6 +27,13 @@ contract AgreementFactory is ReentrancyGuard, EIP712 {
         "PermitAgreementWithActions(string docUri,bytes32 docHash,bytes32 initialState,bytes32 inputDefsHash,bytes32 transitionsHash,bytes32 initVarsHash,bytes32 verifiersHash,bytes32 actionsHash,uint256 nonce,uint256 deadline)"
     );
 
+    /// @notice EIP-712 typehash for deterministic creation permits.
+    /// @dev In addition to the complete agreement parameters, the signer binds the
+    ///      CREATE2 salt and the exact clone address derived by this factory.
+    bytes32 public constant DETERMINISTIC_PERMIT_WITH_ACTIONS_TYPEHASH = keccak256(
+        "PermitDeterministicAgreementWithActions(string docUri,bytes32 docHash,bytes32 initialState,bytes32 inputDefsHash,bytes32 transitionsHash,bytes32 initVarsHash,bytes32 verifiersHash,bytes32 actionsHash,bytes32 salt,address predictedAgreement,uint256 nonce,uint256 deadline)"
+    );
+
     // Unused state variable to modify bytecode (version marker)
     uint256 private _versionMarker = 0x2024;
 
@@ -250,8 +257,10 @@ contract AgreementFactory is ReentrancyGuard, EIP712 {
     }
 
     /**
-     * @notice Create an agreement at a deterministic address using a permit signature that also binds action definitions.
-     * @dev Same as `createAgreementWithPermit` but deploys the clone at a deterministic address derived from `salt`.
+     * @notice Create an agreement at a deterministic address using a permit signature.
+     * @dev The signature binds all agreement parameters, the CREATE2 salt, and the
+     *      exact address derived from this factory and implementation. A relayer
+     *      cannot redirect the same authorization to a different clone address.
      *
      * @param signer The address that signed the permit (and will become the agreement owner).
      * @param salt User-provided salt for deterministic address derivation.
@@ -299,10 +308,14 @@ contract AgreementFactory is ReentrancyGuard, EIP712 {
         bytes32 initVarsHash = keccak256(abi.encode(initVars_));
         bytes32 verifiersHash = keccak256(abi.encode(verifiers_));
         bytes32 actionsHash = keccak256(abi.encode(actions_));
+        address predictedAgreement = implementation.predictDeterministicAddress(
+            salt,
+            address(this)
+        );
 
         bytes32 structHash = keccak256(
             abi.encode(
-                PERMIT_WITH_ACTIONS_TYPEHASH,
+                DETERMINISTIC_PERMIT_WITH_ACTIONS_TYPEHASH,
                 keccak256(bytes(docUri)),
                 docHash,
                 initialState,
@@ -311,6 +324,8 @@ contract AgreementFactory is ReentrancyGuard, EIP712 {
                 initVarsHash,
                 verifiersHash,
                 actionsHash,
+                salt,
+                predictedAgreement,
                 currentNonce,
                 deadline
             )

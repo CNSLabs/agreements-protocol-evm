@@ -195,6 +195,19 @@ export const AgreementFactoryABI = [
   },
   {
     "inputs": [],
+    "name": "DETERMINISTIC_PERMIT_WITH_ACTIONS_TYPEHASH",
+    "outputs": [
+      {
+        "internalType": "bytes32",
+        "name": "",
+        "type": "bytes32"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
     "name": "PERMIT_WITH_ACTIONS_TYPEHASH",
     "outputs": [
       {

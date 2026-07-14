@@ -13,9 +13,10 @@ import {
 } from 'viem';
 import { executeTransaction, readContractResult } from "./transactions.js";
 import { withSdkSpan } from "./telemetry.js";
-import { AgreementJson, FactoryConfig, InputDef, Transition, DataField, VerifierInit, ActionInit } from "./types.js";
+import { AgreementJson, FactoryConfig, InputDef, Transition, DataField, VerifierInit, ActionInit, CreateAgreementParams } from "./types.js";
 import { transformAgreementToOnChainParams, InitValue } from "./transformer.js";
 import { AgreementFactoryABI } from "./generated/AgreementFactoryAbi.js";
+import type { CompiledAgreementPackage } from "./package-compiler.js";
 
 // Use inlined ABI data (works in both Node.js and browser)
 // ABI is extracted directly from contract artifacts as an array
@@ -24,6 +25,10 @@ const factoryAbi: Abi = AgreementFactoryABI as Abi;
 // Must match AgreementFactory.sol exactly (PERMIT_WITH_ACTIONS_TYPEHASH)
 const PERMIT_WITH_ACTIONS_TYPE = "PermitAgreementWithActions(string docUri,bytes32 docHash,bytes32 initialState,bytes32 inputDefsHash,bytes32 transitionsHash,bytes32 initVarsHash,bytes32 verifiersHash,bytes32 actionsHash,uint256 nonce,uint256 deadline)";
 const PERMIT_WITH_ACTIONS_TYPEHASH: Hex = keccak256(stringToHex(PERMIT_WITH_ACTIONS_TYPE));
+const DETERMINISTIC_PERMIT_WITH_ACTIONS_TYPE = "PermitDeterministicAgreementWithActions(string docUri,bytes32 docHash,bytes32 initialState,bytes32 inputDefsHash,bytes32 transitionsHash,bytes32 initVarsHash,bytes32 verifiersHash,bytes32 actionsHash,bytes32 salt,address predictedAgreement,uint256 nonce,uint256 deadline)";
+const DETERMINISTIC_PERMIT_WITH_ACTIONS_TYPEHASH: Hex = keccak256(
+  stringToHex(DETERMINISTIC_PERMIT_WITH_ACTIONS_TYPE),
+);
 
 export type CreateAgreementOptions = {
   docUri?: string;
@@ -35,6 +40,46 @@ export type CreateAgreementPermitSignature = {
   v: number;
   r: Hex;
   s: Hex;
+};
+
+export type DeterministicAgreementPermitTypedData = {
+  domain: {
+    name: "AgreementFactory";
+    version: "1";
+    chainId: number;
+    verifyingContract: Hex;
+  };
+  types: {
+    PermitDeterministicAgreementWithActions: readonly [
+      { readonly name: "docUri"; readonly type: "string" },
+      { readonly name: "docHash"; readonly type: "bytes32" },
+      { readonly name: "initialState"; readonly type: "bytes32" },
+      { readonly name: "inputDefsHash"; readonly type: "bytes32" },
+      { readonly name: "transitionsHash"; readonly type: "bytes32" },
+      { readonly name: "initVarsHash"; readonly type: "bytes32" },
+      { readonly name: "verifiersHash"; readonly type: "bytes32" },
+      { readonly name: "actionsHash"; readonly type: "bytes32" },
+      { readonly name: "salt"; readonly type: "bytes32" },
+      { readonly name: "predictedAgreement"; readonly type: "address" },
+      { readonly name: "nonce"; readonly type: "uint256" },
+      { readonly name: "deadline"; readonly type: "uint256" },
+    ];
+  };
+  primaryType: "PermitDeterministicAgreementWithActions";
+  message: {
+    docUri: string;
+    docHash: Hex;
+    initialState: Hex;
+    inputDefsHash: Hex;
+    transitionsHash: Hex;
+    initVarsHash: Hex;
+    verifiersHash: Hex;
+    actionsHash: Hex;
+    salt: Hex;
+    predictedAgreement: Hex;
+    nonce: bigint;
+    deadline: bigint;
+  };
 };
 
 interface FactoryClients {
@@ -314,6 +359,25 @@ export class AgreementFactory {
     );
   }
 
+  private assertCompiledPackageDigest(compiledPackage: CompiledAgreementPackage): void {
+    if (
+      compiledPackage.params.docHash.toLowerCase() !==
+      compiledPackage.manifest.packageDigest.toLowerCase()
+    ) {
+      throw new Error(
+        "Compiled package docHash must equal the canonical package digest",
+      );
+    }
+  }
+
+  private splitPermitSignature(signatureHex: Hex): CreateAgreementPermitSignature {
+    return {
+      r: `0x${signatureHex.slice(2, 66)}` as Hex,
+      s: `0x${signatureHex.slice(66, 130)}` as Hex,
+      v: parseInt(signatureHex.slice(130, 132), 16),
+    };
+  }
+
   /**
    * Create a new agreement from an AgreementJson definition
    * 
@@ -398,6 +462,162 @@ export class AgreementFactory {
       functionName: 'nonces',
       args: [signer],
     });
+  }
+
+  /**
+   * Build the exact EIP-712 payload for a deterministic creation permit.
+   *
+   * The payload binds the complete deployment parameters, CREATE2 salt,
+   * predicted clone address, signer nonce, chain, and factory address. It does
+   * not request a signature and is suitable for policy review or wallet UI.
+   */
+  async prepareDeterministicPermitTypedData(
+    signer: Hex,
+    params: CreateAgreementParams,
+    salt: Hex,
+    deadline: number,
+  ): Promise<DeterministicAgreementPermitTypedData> {
+    const [nonce, chainId, predictedAgreement] = await Promise.all([
+      this.getNonce(signer),
+      this.clients.publicClient.getChainId(),
+      this.predictAddress(salt),
+    ]);
+
+    const domain = {
+      name: "AgreementFactory",
+      version: "1",
+      chainId,
+      verifyingContract: this.config.factoryAddress,
+    } as const;
+
+    const types = {
+      PermitDeterministicAgreementWithActions: [
+        { name: "docUri", type: "string" },
+        { name: "docHash", type: "bytes32" },
+        { name: "initialState", type: "bytes32" },
+        { name: "inputDefsHash", type: "bytes32" },
+        { name: "transitionsHash", type: "bytes32" },
+        { name: "initVarsHash", type: "bytes32" },
+        { name: "verifiersHash", type: "bytes32" },
+        { name: "actionsHash", type: "bytes32" },
+        { name: "salt", type: "bytes32" },
+        { name: "predictedAgreement", type: "address" },
+        { name: "nonce", type: "uint256" },
+        { name: "deadline", type: "uint256" },
+      ],
+    } as const;
+
+    return {
+      domain,
+      types,
+      primaryType: "PermitDeterministicAgreementWithActions",
+      message: {
+        docUri: params.docUri,
+        docHash: params.docHash,
+        initialState: params.initialState,
+        inputDefsHash: this.hashInputDefs(params.inputDefs),
+        transitionsHash: this.hashTransitions(params.transitions),
+        initVarsHash: this.hashInitVars(params.initVars),
+        verifiersHash: this.hashVerifiers(params.verifiers),
+        actionsHash: this.hashActions(params.actions),
+        salt,
+        predictedAgreement,
+        nonce,
+        deadline: BigInt(deadline),
+      },
+    };
+  }
+
+  /**
+   * Sign a deterministic creation permit for an AgreementJson definition.
+   */
+  async createDeterministicPermitSignature(
+    walletClient: WalletClient,
+    agreement: AgreementJson,
+    salt: Hex,
+    deadline: number,
+    options?: CreateAgreementOptions,
+  ): Promise<{
+    signature: CreateAgreementPermitSignature;
+    signerAddress: Hex;
+    typedData: DeterministicAgreementPermitTypedData;
+  }> {
+    const params = transformAgreementToOnChainParams(
+      agreement,
+      options?.docUri,
+      options?.initValues,
+    );
+    params.verifiers = options?.verifiers ?? params.verifiers;
+
+    return await this.createDeterministicPermitSignatureForParams(
+      walletClient,
+      params,
+      salt,
+      deadline,
+    );
+  }
+
+  /**
+   * Sign a deterministic permit for strict compiler output. The compiler's
+   * canonical package digest is required to be the deployment docHash, so the
+   * signed permit directly authorizes that exact package.
+   */
+  async createCompiledPackageDeterministicPermitSignature(
+    walletClient: WalletClient,
+    compiledPackage: CompiledAgreementPackage,
+    salt: Hex,
+    deadline: number,
+  ): Promise<{
+    signature: CreateAgreementPermitSignature;
+    signerAddress: Hex;
+    typedData: DeterministicAgreementPermitTypedData;
+  }> {
+    this.assertCompiledPackageDigest(compiledPackage);
+    return await this.createDeterministicPermitSignatureForParams(
+      walletClient,
+      compiledPackage.params,
+      salt,
+      deadline,
+    );
+  }
+
+  private async createDeterministicPermitSignatureForParams(
+    walletClient: WalletClient,
+    params: CreateAgreementParams,
+    salt: Hex,
+    deadline: number,
+  ): Promise<{
+    signature: CreateAgreementPermitSignature;
+    signerAddress: Hex;
+    typedData: DeterministicAgreementPermitTypedData;
+  }> {
+    const account = walletClient.account;
+    if (!account) {
+      throw new Error("WalletClient must be connected to an account to sign typed data");
+    }
+
+    const signerAddress = account.address as Hex;
+    const typedData = await this.prepareDeterministicPermitTypedData(
+      signerAddress,
+      params,
+      salt,
+      deadline,
+    );
+
+    if (!DETERMINISTIC_PERMIT_WITH_ACTIONS_TYPEHASH) {
+      throw new Error("DETERMINISTIC_PERMIT_WITH_ACTIONS_TYPEHASH not initialized");
+    }
+
+    const signatureHex = await walletClient.signTypedData({
+      account,
+      ...typedData,
+    });
+
+    return {
+      signature: this.splitPermitSignature(signatureHex),
+      signerAddress,
+      typedData,
+    };
   }
 
   /**
@@ -640,8 +860,8 @@ export class AgreementFactory {
   }
 
   /**
-   * Create a new deterministic agreement using a permit signature.
-   * Note: The on-chain permit does NOT bind the salt; the signature authorizes the agreement params.
+   * Create a new deterministic agreement using a permit signature that binds
+   * both the complete agreement parameters and the exact deployment identity.
    */
   async createAgreementDeterministicWithPermit(
     signer: Hex,
@@ -655,22 +875,72 @@ export class AgreementFactory {
     request: WriteContractParameters;
     receipt: Awaited<ReturnType<PublicClient["waitForTransactionReceipt"]>>;
   }> {
+    const params = transformAgreementToOnChainParams(
+      agreement,
+      options?.docUri,
+      options?.initValues,
+    );
+    params.verifiers = options?.verifiers ?? params.verifiers;
+
+    return await this.createAgreementDeterministicWithPermitFromParams(
+      signer,
+      salt,
+      params,
+      deadline,
+      signature,
+      { templateId: agreement.metadata?.templateId },
+    );
+  }
+
+  /**
+   * Deploy strict compiler output using the deterministic permit signed for it.
+   * This preserves the compiler's canonical package digest as the on-chain
+   * docHash and rejects inconsistent/mutated compilation results.
+   */
+  async createCompiledAgreementPackageDeterministicWithPermit(
+    signer: Hex,
+    salt: Hex,
+    compiledPackage: CompiledAgreementPackage,
+    deadline: number,
+    signature: CreateAgreementPermitSignature,
+  ): Promise<{
+    address: Hex;
+    request: WriteContractParameters;
+    receipt: Awaited<ReturnType<PublicClient["waitForTransactionReceipt"]>>;
+  }> {
+    this.assertCompiledPackageDigest(compiledPackage);
+    return await this.createAgreementDeterministicWithPermitFromParams(
+      signer,
+      salt,
+      compiledPackage.params,
+      deadline,
+      signature,
+      { packageDigest: compiledPackage.manifest.packageDigest },
+    );
+  }
+
+  private async createAgreementDeterministicWithPermitFromParams(
+    signer: Hex,
+    salt: Hex,
+    params: CreateAgreementParams,
+    deadline: number,
+    signature: CreateAgreementPermitSignature,
+    attributes: { templateId?: string; packageDigest?: Hex },
+  ): Promise<{
+    address: Hex;
+    request: WriteContractParameters;
+    receipt: Awaited<ReturnType<PublicClient["waitForTransactionReceipt"]>>;
+  }> {
     return await withSdkSpan(
       "agreement_factory.create_deterministic_with_permit",
       {
         "blockchain.chain_id": this.config.chainId ?? this.clients.publicClient?.chain?.id,
         "blockchain.contract.address": this.config.factoryAddress,
-        "agreement.template_id": agreement.metadata?.templateId,
+        "agreement.template_id": attributes.templateId,
+        "agreement.package_digest": attributes.packageDigest,
         "wallet.signer": signer,
       },
       async () => {
-        const params = transformAgreementToOnChainParams(
-          agreement,
-          options?.docUri,
-          options?.initValues,
-        );
-        const verifiers = options?.verifiers ?? params.verifiers;
-
         const { request } = await this.simulate('createAgreementDeterministicWithPermit', [
           signer,
           salt,
@@ -680,7 +950,7 @@ export class AgreementFactory {
           params.inputDefs,
           params.transitions,
           params.initVars,
-          verifiers,
+          params.verifiers,
           params.actions,
           BigInt(deadline),
           signature.v,
