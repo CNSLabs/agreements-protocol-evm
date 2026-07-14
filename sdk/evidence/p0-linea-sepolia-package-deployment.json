@@ -1,0 +1,217 @@
+{
+  "schemaVersion": "shodai.agreements.p0-linea-package-proof/0.1",
+  "source": {
+    "repository": "https://github.com/CNSLabs/agreements-protocol-evm",
+    "commit": "3aee5a13cf194c41cac1f106d49ea93c0872b33d",
+    "referencePackage": "sdk/tests/fixtures/canonical-package-v0-reference-package.json",
+    "referencePackageSha256": "0x35fed4884d64e9394b9ae0b353c56e8df1b925d39bbcef98e058f7f4323d0533"
+  },
+  "network": {
+    "name": "lineaSepolia",
+    "chainId": "59141",
+    "explorerBaseUrl": "https://sepolia.lineascan.build"
+  },
+  "protocolDeployment": {
+    "schemaVersion": "shodai.agreements.deployment-provenance/0.1",
+    "protocolVersion": "0.2.0",
+    "implementation": "0x8399b4598bD56021d16812Cb0294373062aa63f5",
+    "factory": "0x5658C22f6367883631Cbb674719824881Bf1A6ef",
+    "chainId": "59141",
+    "network": "lineaSepolia",
+    "deployedAt": "2026-07-14T05:37:02.093Z",
+    "deployer": "0x60D84A7dBF7e7a80725655BDAB7991B4755Ce8d6",
+    "source": {
+      "repository": "https://github.com/CNSLabs/agreements-protocol-evm",
+      "commit": "21caaae15e9f2240e7c9ea723f7175de9d416f27"
+    },
+    "compiler": {
+      "solcVersion": "0.8.24",
+      "optimizer": {
+        "enabled": true,
+        "runs": 200
+      },
+      "viaIR": true,
+      "evmVersion": "cancun"
+    },
+    "artifacts": {
+      "AgreementEngine": {
+        "creationBytecodeHash": "0x68e9a2987376b5452177526125c470a69d5bae6fd36be1a172effdcc155768ab",
+        "deployedBytecodeTemplateHash": "0xf386fbece1af7e0b768e68a66d020f29c3692890471edca22b99d9181fe944c5"
+      },
+      "AgreementFactory": {
+        "creationBytecodeHash": "0xe7e1b39ee718de2d56b2c014a14c0a9f17cd07046389f1b4ea5ec30774eeb807",
+        "deployedBytecodeTemplateHash": "0xda05cea78fbded6ce543ccc00fa9299bbf43f84395d91c4e325a79851a05e193"
+      }
+    },
+    "transactions": {
+      "implementationDeployment": {
+        "hash": "0x714e9c778d45bc30f370289f3b844f63431ae6422ebde42f46bd3a38b52af6cd",
+        "blockNumber": "30844676",
+        "inputHash": "0x68e9a2987376b5452177526125c470a69d5bae6fd36be1a172effdcc155768ab"
+      },
+      "factoryDeployment": {
+        "hash": "0x5b0ae62200bed1037f8eefefe3fe4f943bebee83cc8ba06e230a0087e9058849",
+        "blockNumber": "30844677",
+        "inputHash": "0xc9b253e813446475e525f18efc2ac95b65180f9a9111d23490426076b5331748"
+      }
+    },
+    "runtime": {
+      "implementationCodeHash": "0x48de85054a949fdc5b85d0052bd12f117d621621e7ebb67745ee0bf4cc72482a",
+      "implementationCodeBytes": 17266,
+      "factoryCodeHash": "0x5d54b21edf7eddcdfa28413906d731344d51e32c14e56821cf41046b52030451",
+      "factoryCodeBytes": 7495
+    },
+    "explorerVerification": {
+      "enabled": false,
+      "reason": "ETHERSCAN_API_KEY is not set; set SKIP_CONTRACT_VERIFICATION=true to skip intentionally",
+      "implementation": "skipped",
+      "factory": "skipped"
+    }
+  },
+  "package": {
+    "schemaVersion": "0.1",
+    "profile": {
+      "id": "shodai.evm.agreement-engine",
+      "version": "0.1",
+      "compiler": "@shodai-network/agreements-protocol-evm/package-compiler-0.1"
+    },
+    "packageDigest": "0xbadcf69305da75949634578328f3496dc4dec02e509c485f3df7421b05eca123",
+    "canonicalPackageBytes": 3114,
+    "canonicalPackageSha256": "0x64dceaca7c2eac80b1c493bc38fd1196510169f44d293be14d70012552a24455",
+    "targetChainId": "59141",
+    "docUri": "ipfs://agreement/did:agreement:canonical-package-grant",
+    "compiled": {
+      "inputDefs": 3,
+      "transitions": 3,
+      "initVars": 3,
+      "verifiers": 0,
+      "actions": 1
+    }
+  },
+  "authorization": {
+    "route": "createAgreementDeterministicWithPermit",
+    "standard": "EIP-712",
+    "signer": "0x60D84A7dBF7e7a80725655BDAB7991B4755Ce8d6",
+    "submitter": "0x60D84A7dBF7e7a80725655BDAB7991B4755Ce8d6",
+    "signature": "0x8202af6630497c404aa4e12f84aa1997f914ca481fe9d6396df5d4b0b626d1ab0cf6296c7c1780163446f056a7bd26b5d7b4a9e93a67efb1f662a7f504d2707d1c",
+    "signatureBytes": 65,
+    "signatureHash": "0x7668d0bf603929730d4f926c0cfdaebb22d72c2298a5b97ed86931e08b34a33e",
+    "typedDataHash": "0x977f32816464cba73be7c5a74cd49dd153280a3e5741116f4c4e19c665d88f91",
+    "typedData": {
+      "domain": {
+        "name": "AgreementFactory",
+        "version": "1",
+        "chainId": 59141,
+        "verifyingContract": "0x5658C22f6367883631Cbb674719824881Bf1A6ef"
+      },
+      "types": {
+        "PermitDeterministicAgreementWithActions": [
+          {
+            "name": "docUri",
+            "type": "string"
+          },
+          {
+            "name": "docHash",
+            "type": "bytes32"
+          },
+          {
+            "name": "initialState",
+            "type": "bytes32"
+          },
+          {
+            "name": "inputDefsHash",
+            "type": "bytes32"
+          },
+          {
+            "name": "transitionsHash",
+            "type": "bytes32"
+          },
+          {
+            "name": "initVarsHash",
+            "type": "bytes32"
+          },
+          {
+            "name": "verifiersHash",
+            "type": "bytes32"
+          },
+          {
+            "name": "actionsHash",
+            "type": "bytes32"
+          },
+          {
+            "name": "salt",
+            "type": "bytes32"
+          },
+          {
+            "name": "predictedAgreement",
+            "type": "address"
+          },
+          {
+            "name": "nonce",
+            "type": "uint256"
+          },
+          {
+            "name": "deadline",
+            "type": "uint256"
+          }
+        ]
+      },
+      "primaryType": "PermitDeterministicAgreementWithActions",
+      "message": {
+        "docUri": "ipfs://agreement/did:agreement:canonical-package-grant",
+        "docHash": "0xbadcf69305da75949634578328f3496dc4dec02e509c485f3df7421b05eca123",
+        "initialState": "0xd575afd82b6d4e8fbb5b9cff3a2d655b398781e25965b4bf7597e5c1d6bf38ca",
+        "inputDefsHash": "0xb88d3334af63225e88b9f376aa44e67eb32689b61120eccfa7d2446b3f8a9a86",
+        "transitionsHash": "0x9035eaa7a7f75195980ec90d6696f51b91cdc8191c81ddc610df8dcc73093b54",
+        "initVarsHash": "0x881daa144375227ba9395d25b966dae73d4d74244a2c9f11d9b7264c0986bdc7",
+        "verifiersHash": "0x569e75fc77c1a856f6daaf9e69d8a9566ca34aa47f9133711ce065a571af0cfd",
+        "actionsHash": "0x02d34352cb090f0a58b5f256839ff624dd4e7349d7d0ed764ea36fff02e9622f",
+        "salt": "0xd949b1d7ec16cdf27530b712671cfbc721eff15e24347cb231e08adc07b04ee0",
+        "predictedAgreement": "0x54C154AE2c0BaEd6B601a6d73AF8180445141afc",
+        "nonce": "0",
+        "deadline": "1784011258"
+      }
+    },
+    "recoveredSigner": "0x60D84A7dBF7e7a80725655BDAB7991B4755Ce8d6",
+    "salt": "0xd949b1d7ec16cdf27530b712671cfbc721eff15e24347cb231e08adc07b04ee0",
+    "predictedAddress": "0x54C154AE2c0BaEd6B601a6d73AF8180445141afc",
+    "nonceAfter": "1"
+  },
+  "deployment": {
+    "agreement": "0x54C154AE2c0BaEd6B601a6d73AF8180445141afc",
+    "transactionHash": "0x6b3cfa0dd842837552495ce06588666fa78f1440399c41c725044483ba357daf",
+    "transactionInputHash": "0x72c0f4a75739e24b2a3e1a7047422330e740c6498a5afd09df59d56c01dcd36d",
+    "blockNumber": "30844740",
+    "gasUsed": "1252496",
+    "status": "success",
+    "runtimeCodeHash": "0x9a9b7590470f18b0b1ede8884aef29adf3788fa3243ec4b5f108d99f3bcdbb9a",
+    "runtimeCodeBytes": 45
+  },
+  "onChain": {
+    "address": "0x54C154AE2c0BaEd6B601a6d73AF8180445141afc",
+    "docUri": "ipfs://agreement/did:agreement:canonical-package-grant",
+    "docHash": "0xbadcf69305da75949634578328f3496dc4dec02e509c485f3df7421b05eca123",
+    "initialState": "0xd575afd82b6d4e8fbb5b9cff3a2d655b398781e25965b4bf7597e5c1d6bf38ca",
+    "currentState": "0xd575afd82b6d4e8fbb5b9cff3a2d655b398781e25965b4bf7597e5c1d6bf38ca",
+    "owner": "0x60D84A7dBF7e7a80725655BDAB7991B4755Ce8d6"
+  },
+  "checks": {
+    "compilerIssueCountIsZero": true,
+    "docHashEqualsPackageDigest": true,
+    "typedDataDocHashEqualsPackageDigest": true,
+    "recoveredSignerMatches": true,
+    "predictedAddressEqualsActual": true,
+    "onChainDocHashMatches": true,
+    "onChainOwnerMatches": true,
+    "onChainInitialStateMatches": true,
+    "onChainCurrentStateMatchesInitial": true,
+    "permitNonceIncremented": true,
+    "transactionSucceeded": true
+  },
+  "explorer": {
+    "agreement": "https://sepolia.lineascan.build/address/0x54C154AE2c0BaEd6B601a6d73AF8180445141afc",
+    "transaction": "https://sepolia.lineascan.build/tx/0x6b3cfa0dd842837552495ce06588666fa78f1440399c41c725044483ba357daf",
+    "factory": "https://sepolia.lineascan.build/address/0x5658C22f6367883631Cbb674719824881Bf1A6ef",
+    "implementation": "https://sepolia.lineascan.build/address/0x8399b4598bD56021d16812Cb0294373062aa63f5"
+  }
+}
