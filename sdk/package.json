@@ -1,6 +1,6 @@
 {
   "name": "@shodai-network/agreements-protocol-evm",
-  "version": "0.1.4",
+  "version": "0.2.0",
   "description": "TypeScript SDK for the Agreements Protocol",
   "author": "CNS Labs",
   "license": "Apache-2.0",
