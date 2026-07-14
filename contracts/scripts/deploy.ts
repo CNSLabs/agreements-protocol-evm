@@ -76,7 +76,7 @@ function writeDeploymentInfo(networkName: string, deploymentInfo: Record<string,
   }
 
   const deploymentPath = path.join(networkDir, "AgreementsProtocol.json");
-  fs.writeFileSync(deploymentPath, JSON.stringify(deploymentInfo, null, 2));
+  fs.writeFileSync(deploymentPath, `${JSON.stringify(deploymentInfo, null, 2)}\n`);
 
   return deploymentPath;
 }

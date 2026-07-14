@@ -1,8 +1,57 @@
 {
-  "implementation": "0x1F0f9c889E6c762D8D5669c65a1A8fDFbEe38664",
-  "factory": "0x26Ff3AdEC23fC5778f190371B1CcCadDa74e26c8",
+  "schemaVersion": "shodai.agreements.deployment-provenance/0.1",
+  "protocolVersion": "0.2.0",
+  "implementation": "0x8399b4598bD56021d16812Cb0294373062aa63f5",
+  "factory": "0x5658C22f6367883631Cbb674719824881Bf1A6ef",
   "chainId": "59141",
   "network": "lineaSepolia",
-  "deployedAt": "2026-04-28T18:27:40.269Z",
-  "deployer": "0x2a6fFb5341F8C1cE123343162E3351F1B6286C43"
+  "deployedAt": "2026-07-14T05:37:02.093Z",
+  "deployer": "0x60D84A7dBF7e7a80725655BDAB7991B4755Ce8d6",
+  "source": {
+    "repository": "https://github.com/CNSLabs/agreements-protocol-evm",
+    "commit": "21caaae15e9f2240e7c9ea723f7175de9d416f27"
+  },
+  "compiler": {
+    "solcVersion": "0.8.24",
+    "optimizer": {
+      "enabled": true,
+      "runs": 200
+    },
+    "viaIR": true,
+    "evmVersion": "cancun"
+  },
+  "artifacts": {
+    "AgreementEngine": {
+      "creationBytecodeHash": "0x68e9a2987376b5452177526125c470a69d5bae6fd36be1a172effdcc155768ab",
+      "deployedBytecodeTemplateHash": "0xf386fbece1af7e0b768e68a66d020f29c3692890471edca22b99d9181fe944c5"
+    },
+    "AgreementFactory": {
+      "creationBytecodeHash": "0xe7e1b39ee718de2d56b2c014a14c0a9f17cd07046389f1b4ea5ec30774eeb807",
+      "deployedBytecodeTemplateHash": "0xda05cea78fbded6ce543ccc00fa9299bbf43f84395d91c4e325a79851a05e193"
+    }
+  },
+  "transactions": {
+    "implementationDeployment": {
+      "hash": "0x714e9c778d45bc30f370289f3b844f63431ae6422ebde42f46bd3a38b52af6cd",
+      "blockNumber": "30844676",
+      "inputHash": "0x68e9a2987376b5452177526125c470a69d5bae6fd36be1a172effdcc155768ab"
+    },
+    "factoryDeployment": {
+      "hash": "0x5b0ae62200bed1037f8eefefe3fe4f943bebee83cc8ba06e230a0087e9058849",
+      "blockNumber": "30844677",
+      "inputHash": "0xc9b253e813446475e525f18efc2ac95b65180f9a9111d23490426076b5331748"
+    }
+  },
+  "runtime": {
+    "implementationCodeHash": "0x48de85054a949fdc5b85d0052bd12f117d621621e7ebb67745ee0bf4cc72482a",
+    "implementationCodeBytes": 17266,
+    "factoryCodeHash": "0x5d54b21edf7eddcdfa28413906d731344d51e32c14e56821cf41046b52030451",
+    "factoryCodeBytes": 7495
+  },
+  "explorerVerification": {
+    "enabled": false,
+    "reason": "ETHERSCAN_API_KEY is not set; set SKIP_CONTRACT_VERIFICATION=true to skip intentionally",
+    "implementation": "skipped",
+    "factory": "skipped"
+  }
 }
