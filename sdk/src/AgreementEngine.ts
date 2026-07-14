@@ -349,7 +349,7 @@ export class AgreementEngine {
    * @param inputId - The input identifier (e.g., "grantorData")
    * @param data - Plain object with field values
    * @param deadline - Unix timestamp when the permit expires
-   * @returns The signature components (v, r, s) and the signer address
+   * @returns Opaque EOA or ERC-1271 signature bytes and the signer address
    * 
    * @example
    * ```typescript
@@ -372,7 +372,7 @@ export class AgreementEngine {
     data: Record<string, unknown>,
     deadline: number
   ): Promise<{
-    signature: { v: number; r: string; s: string };
+    signature: Hex;
     signerAddress: Hex;
   }> {
     // Get current nonce for the signer
@@ -423,13 +423,8 @@ export class AgreementEngine {
       message,
     });
 
-    // Split signature into v, r, s
-    const r = `0x${signature.slice(2, 66)}`;
-    const s = `0x${signature.slice(66, 130)}`;
-    const v = parseInt(signature.slice(130, 132), 16);
-
     return {
-      signature: { v, r, s },
+      signature,
       signerAddress,
     };
   }
@@ -442,7 +437,7 @@ export class AgreementEngine {
    * @param inputId - The input identifier
    * @param data - Plain object with field values
    * @param deadline - Unix timestamp when the permit expires
-   * @param signature - The permit signature (v, r, s components)
+   * @param signature - Opaque EOA or ERC-1271 permit signature bytes
    * @param waitForConfirmation - Whether to wait for transaction confirmation (default: false)
    * @returns Transaction hash, or receipt if waitForConfirmation is true
    * 
@@ -489,7 +484,7 @@ export class AgreementEngine {
     inputId: string,
     data: Record<string, unknown>,
     deadline: number,
-    signature: { v: number; r: string; s: string },
+    signature: Hex,
     waitForConfirmation: boolean = false
   ): Promise<Hash | TransactionReceipt> {
     return await withSdkSpan(
@@ -523,9 +518,7 @@ export class AgreementEngine {
             inputIdBytes32,
             payload,
             BigInt(deadline),
-            signature.v,
-            signature.r,
-            signature.s,
+            signature,
           ],
         };
 

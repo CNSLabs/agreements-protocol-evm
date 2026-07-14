@@ -92,9 +92,7 @@ describe("AgreementsProtocol", function () {
       nonce,
       deadline,
     };
-    const signature = ethers.Signature.from(
-      await signer.signTypedData(domain, types, message)
-    );
+    const signature = await signer.signTypedData(domain, types, message);
 
     return { predictedAgreement, signature };
   }
@@ -286,8 +284,7 @@ describe("AgreementsProtocol", function () {
     );
     const deadline = (await ethers.provider.getBlock("latest"))!.timestamp + 3600;
     const network = await ethers.provider.getNetwork();
-    const signature = ethers.Signature.from(
-      await owner.signTypedData(
+    const signature = await owner.signTypedData(
         {
           name: "AgreementEngine",
           version: "1",
@@ -303,8 +300,7 @@ describe("AgreementsProtocol", function () {
           ],
         },
         { inputId, payload, nonce: 0n, deadline }
-      )
-    );
+      );
 
     await expect(
       agreement.connect(relayer).submitInputWithPermit(
@@ -312,13 +308,166 @@ describe("AgreementsProtocol", function () {
         inputId,
         payload,
         deadline,
-        signature.v,
-        signature.r,
-        signature.s
+        signature
       )
     ).to.emit(agreement, "InputSubmittedWithPermit")
       .withArgs(owner.address, relayer.address, inputId);
     expect(await agreement.currentState()).to.equal(completeState);
+  });
+
+  it("accepts ERC-1271 signatures for factory creation and engine input permits", async function () {
+    const { owner, factory } = await deployProtocol();
+    const [, relayer] = await ethers.getSigners();
+    const smartSigner = await ethers.deployContract("TestERC1271Signer", [owner.address]);
+    await smartSigner.waitForDeployment();
+    const smartSignerAddress = await smartSigner.getAddress();
+    const factoryAddress = await factory.getAddress();
+    const network = await ethers.provider.getNetwork();
+    const coder = ethers.AbiCoder.defaultAbiCoder();
+    const hash = (type: string, value: unknown) =>
+      ethers.keccak256(coder.encode([type], [value]));
+    const inputId = ethers.keccak256(ethers.toUtf8Bytes("smart-account-input"));
+    const initialState = ethers.keccak256(ethers.toUtf8Bytes("INITIAL"));
+    const completeState = ethers.keccak256(ethers.toUtf8Bytes("COMPLETE"));
+    const deployment = {
+      docUri: "ipfs://agreement/erc1271",
+      docHash: ethers.keccak256(ethers.toUtf8Bytes("erc1271-package")),
+      initialState,
+      inputDefs: [{ id: inputId, fields: [], conditions: [], verifierKeys: [] }],
+      transitions: [{ fromState: initialState, toState: completeState, inputId }],
+      initVars: [],
+      verifiers: [],
+      actions: [],
+    };
+    const hashes = {
+      inputDefsHash: hash(
+        "tuple(bytes32 id,tuple(bytes32 fieldId,uint8 fType,bool required,bool persist)[] fields,tuple(uint8 op,bytes32 fieldId,bytes bytesArg)[] conditions,bytes32[] verifierKeys)[]",
+        deployment.inputDefs
+      ),
+      transitionsHash: hash(
+        "tuple(bytes32 fromState,bytes32 toState,bytes32 inputId)[]",
+        deployment.transitions
+      ),
+      initVarsHash: hash("tuple(bytes32 id,uint8 fType,bytes data)[]", deployment.initVars),
+      verifiersHash: hash("tuple(bytes32 key,address verifier)[]", deployment.verifiers),
+      actionsHash: hash(
+        "tuple(bytes32 fromState,bytes32 inputId,address target,uint256 value,bytes data)[]",
+        deployment.actions
+      ),
+    };
+    const deadline = (await ethers.provider.getBlock("latest"))!.timestamp + 3600;
+    const domain = {
+      name: "AgreementFactory",
+      version: "1",
+      chainId: network.chainId,
+      verifyingContract: factoryAddress,
+    };
+    const factoryTypes = {
+      PermitAgreementWithActions: [
+        { name: "docUri", type: "string" },
+        { name: "docHash", type: "bytes32" },
+        { name: "initialState", type: "bytes32" },
+        { name: "inputDefsHash", type: "bytes32" },
+        { name: "transitionsHash", type: "bytes32" },
+        { name: "initVarsHash", type: "bytes32" },
+        { name: "verifiersHash", type: "bytes32" },
+        { name: "actionsHash", type: "bytes32" },
+        { name: "nonce", type: "uint256" },
+        { name: "deadline", type: "uint256" },
+      ],
+    };
+    const creationSignature = await owner.signTypedData(domain, factoryTypes, {
+      ...deployment,
+      ...hashes,
+      nonce: 0n,
+      deadline,
+    });
+    const createArgs = [
+      smartSignerAddress,
+      deployment.docUri,
+      deployment.docHash,
+      deployment.initialState,
+      deployment.inputDefs,
+      deployment.transitions,
+      deployment.initVars,
+      deployment.verifiers,
+      deployment.actions,
+      deadline,
+      creationSignature,
+    ] as const;
+    const agreementAddress = await factory
+      .connect(relayer)
+      .createAgreementWithPermit.staticCall(...createArgs);
+    await expect(factory.connect(relayer).createAgreementWithPermit(...createArgs))
+      .to.emit(factory, "AgreementCreatedWithPermit")
+      .withArgs(agreementAddress, smartSignerAddress, relayer.address);
+    const agreement = await ethers.getContractAt("AgreementEngine", agreementAddress);
+    expect(await agreement.owner()).to.equal(smartSignerAddress);
+
+    const payload = coder.encode(["tuple(bytes32 id,uint8 fType,bytes data)[]"], [[]]);
+    const inputSignature = await owner.signTypedData(
+      {
+        name: "AgreementEngine",
+        version: "1",
+        chainId: network.chainId,
+        verifyingContract: agreementAddress,
+      },
+      {
+        PermitInput: [
+          { name: "inputId", type: "bytes32" },
+          { name: "payload", type: "bytes" },
+          { name: "nonce", type: "uint256" },
+          { name: "deadline", type: "uint256" },
+        ],
+      },
+      { inputId, payload, nonce: 0n, deadline }
+    );
+    await expect(
+      agreement
+        .connect(relayer)
+        .submitInputWithPermit(smartSignerAddress, inputId, payload, deadline, inputSignature)
+    ).to.emit(agreement, "InputSubmittedWithPermit")
+      .withArgs(smartSignerAddress, relayer.address, inputId);
+    expect(await agreement.currentState()).to.equal(completeState);
+
+    const salt = ethers.keccak256(ethers.toUtf8Bytes("erc1271-deterministic"));
+    const predictedAgreement = await factory.predictAddress(salt);
+    const deterministicTypes = {
+      PermitDeterministicAgreementWithActions: [
+        ...factoryTypes.PermitAgreementWithActions.slice(0, 8),
+        { name: "salt", type: "bytes32" },
+        { name: "predictedAgreement", type: "address" },
+        { name: "nonce", type: "uint256" },
+        { name: "deadline", type: "uint256" },
+      ],
+    };
+    const deterministicSignature = await owner.signTypedData(domain, deterministicTypes, {
+      ...deployment,
+      ...hashes,
+      salt,
+      predictedAgreement,
+      nonce: 1n,
+      deadline,
+    });
+    await expect(
+      factory.connect(relayer).createAgreementDeterministicWithPermit(
+        smartSignerAddress,
+        salt,
+        deployment.docUri,
+        deployment.docHash,
+        deployment.initialState,
+        deployment.inputDefs,
+        deployment.transitions,
+        deployment.initVars,
+        deployment.verifiers,
+        deployment.actions,
+        deadline,
+        deterministicSignature
+      )
+    ).to.emit(factory, "AgreementCreatedWithPermit")
+      .withArgs(predictedAgreement, smartSignerAddress, relayer.address);
+    expect(await (await ethers.getContractAt("AgreementEngine", predictedAgreement)).owner())
+      .to.equal(smartSignerAddress);
   });
 
   it("binds deterministic permits to the package digest and exact clone identity", async function () {
@@ -366,9 +515,7 @@ describe("AgreementsProtocol", function () {
         deployment.verifiers,
         deployment.actions,
         deadline,
-        signature.v,
-        signature.r,
-        signature.s
+        signature
       );
 
     const differentSalt = ethers.keccak256(ethers.toUtf8Bytes("other-salt"));

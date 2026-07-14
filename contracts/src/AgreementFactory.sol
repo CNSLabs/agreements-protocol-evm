@@ -4,7 +4,7 @@ pragma solidity ^0.8.20;
 import "@openzeppelin/contracts/proxy/Clones.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
-import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import "@openzeppelin/contracts/utils/cryptography/SignatureChecker.sol";
 import "./AgreementEngine.sol";
 
 /**
@@ -176,9 +176,7 @@ contract AgreementFactory is ReentrancyGuard, EIP712 {
      * @param verifiers_ Optional verifier registrations to install at initialization time.
      * @param actions_ Optional per-transition actions to pre-register; pass an empty array for none.
      * @param deadline The timestamp after which the permit is invalid.
-     * @param v ECDSA signature recovery byte.
-     * @param r ECDSA signature `r` value.
-     * @param s ECDSA signature `s` value.
+     * @param signature Opaque EOA or ERC-1271 signature bytes.
      * @return agreement Address of the deployed agreement clone.
      */
     function createAgreementWithPermit(
@@ -192,9 +190,7 @@ contract AgreementFactory is ReentrancyGuard, EIP712 {
         AgreementEngine.VerifierInit[] calldata verifiers_,
         AgreementEngine.ActionInit[] calldata actions_,
         uint256 deadline,
-        uint8 v,
-        bytes32 r,
-        bytes32 s
+        bytes calldata signature
     ) external nonReentrant returns (address agreement) {
         // Check deadline
         if (block.timestamp > deadline) {
@@ -227,9 +223,7 @@ contract AgreementFactory is ReentrancyGuard, EIP712 {
             )
         );
         bytes32 hash = _hashTypedDataV4(structHash);
-        address recoveredSigner = ECDSA.recover(hash, v, r, s);
-
-        if (recoveredSigner != signer) {
+        if (!SignatureChecker.isValidSignatureNow(signer, hash, signature)) {
             revert InvalidSignature();
         }
 
@@ -273,9 +267,7 @@ contract AgreementFactory is ReentrancyGuard, EIP712 {
      * @param verifiers_ Optional verifier registrations to install at initialization time.
      * @param actions_ Optional per-transition actions to pre-register; pass an empty array for none.
      * @param deadline The timestamp after which the permit is invalid.
-     * @param v ECDSA signature recovery byte.
-     * @param r ECDSA signature `r` value.
-     * @param s ECDSA signature `s` value.
+     * @param signature Opaque EOA or ERC-1271 signature bytes.
      * @return agreement Address of the deployed agreement clone.
      */
     function createAgreementDeterministicWithPermit(
@@ -290,9 +282,7 @@ contract AgreementFactory is ReentrancyGuard, EIP712 {
         AgreementEngine.VerifierInit[] calldata verifiers_,
         AgreementEngine.ActionInit[] calldata actions_,
         uint256 deadline,
-        uint8 v,
-        bytes32 r,
-        bytes32 s
+        bytes calldata signature
     ) external nonReentrant returns (address agreement) {
         // Check deadline
         if (block.timestamp > deadline) {
@@ -331,9 +321,7 @@ contract AgreementFactory is ReentrancyGuard, EIP712 {
             )
         );
         bytes32 hash = _hashTypedDataV4(structHash);
-        address recoveredSigner = ECDSA.recover(hash, v, r, s);
-
-        if (recoveredSigner != signer) {
+        if (!SignatureChecker.isValidSignatureNow(signer, hash, signature)) {
             revert InvalidSignature();
         }
 

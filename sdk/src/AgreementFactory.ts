@@ -36,11 +36,7 @@ export type CreateAgreementOptions = {
   verifiers?: VerifierInit[];
 };
 
-export type CreateAgreementPermitSignature = {
-  v: number;
-  r: Hex;
-  s: Hex;
-};
+export type CreateAgreementPermitSignature = Hex;
 
 export type DeterministicAgreementPermitTypedData = {
   domain: {
@@ -370,14 +366,6 @@ export class AgreementFactory {
     }
   }
 
-  private splitPermitSignature(signatureHex: Hex): CreateAgreementPermitSignature {
-    return {
-      r: `0x${signatureHex.slice(2, 66)}` as Hex,
-      s: `0x${signatureHex.slice(66, 130)}` as Hex,
-      v: parseInt(signatureHex.slice(130, 132), 16),
-    };
-  }
-
   /**
    * Create a new agreement from an AgreementJson definition
    * 
@@ -614,7 +602,7 @@ export class AgreementFactory {
     });
 
     return {
-      signature: this.splitPermitSignature(signatureHex),
+      signature: signatureHex,
       signerAddress,
       typedData,
     };
@@ -711,11 +699,7 @@ export class AgreementFactory {
       message,
     });
 
-    const r = `0x${signatureHex.slice(2, 66)}` as Hex;
-    const s = `0x${signatureHex.slice(66, 130)}` as Hex;
-    const v = parseInt(signatureHex.slice(130, 132), 16);
-
-    return { signature: { v, r, s }, signerAddress };
+    return { signature: signatureHex, signerAddress };
   }
 
   /**
@@ -760,9 +744,7 @@ export class AgreementFactory {
           verifiers,
           params.actions,
           BigInt(deadline),
-          signature.v,
-          signature.r,
-          signature.s,
+          signature,
         ]);
 
         const receipt = await executeTransaction(
@@ -953,9 +935,7 @@ export class AgreementFactory {
           params.verifiers,
           params.actions,
           BigInt(deadline),
-          signature.v,
-          signature.r,
-          signature.s,
+          signature,
         ]);
 
         const receipt = await executeTransaction(

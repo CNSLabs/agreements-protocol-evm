@@ -53,11 +53,7 @@ describe("deterministic agreement permits", () => {
     );
 
     expect(result.signerAddress).toBe(signerAddress);
-    expect(result.signature).toEqual({
-      r: `0x${"55".repeat(32)}`,
-      s: `0x${"66".repeat(32)}`,
-      v: 27,
-    });
+    expect(result.signature).toBe(signatureHex);
     expect(result.typedData.domain).toEqual({
       name: "AgreementFactory",
       version: "1",

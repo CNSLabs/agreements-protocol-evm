@@ -4,7 +4,7 @@ pragma solidity ^0.8.20;
 import "@openzeppelin/contracts/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
-import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import "@openzeppelin/contracts/utils/cryptography/SignatureChecker.sol";
 
 // ============================================================================
 // INTERFACES
@@ -351,7 +351,7 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
      * @param inputId The logical input identifier
      * @param payload Encoded DataField[] array
      * @param deadline The timestamp after which the permit is invalid
-     * @param v, r, s ECDSA signature components
+     * @param signature Opaque EOA or ERC-1271 signature bytes
      * @dev The signer creates an off-chain signature authorizing this specific input submission.
      *      Anyone can submit using this signature, but it must match exactly what was signed.
      */
@@ -360,9 +360,7 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
         bytes32 inputId,
         bytes calldata payload,
         uint256 deadline,
-        uint8 v,
-        bytes32 r,
-        bytes32 s
+        bytes calldata signature
     ) external nonReentrant {
         if (owner == address(0)) revert NotInitialized();
         
@@ -383,9 +381,7 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
             )
         );
         bytes32 hash = _hashTypedDataV4(structHash);
-        address recoveredSigner = ECDSA.recover(hash, v, r, s);
-        
-        if (recoveredSigner != signer) {
+        if (!SignatureChecker.isValidSignatureNow(signer, hash, signature)) {
             revert InvalidSignature();
         }
         
