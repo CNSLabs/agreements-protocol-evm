@@ -17,6 +17,8 @@
     "deploy:lineaSepolia": "hardhat run scripts/deploy.ts --network lineaSepolia",
     "deploy:linea": "hardhat run scripts/deploy.ts --network linea",
     "trace:real-composition": "hardhat run scripts/real-metamask-erc8004-live.ts --network lineaSepolia",
+    "trace:agent-wallet-composition": "DELEGATE_MODE=agent-wallet hardhat run scripts/real-metamask-erc8004-live.ts --network lineaSepolia",
+    "trace:mock-agent-wallet-composition": "bash scripts/trace-mock-agent-wallet.sh",
     "node": "hardhat node",
     "node:fork": "HARDHAT_FORK=true hardhat node",
     "slither": "slither . --config-file slither.config.json",

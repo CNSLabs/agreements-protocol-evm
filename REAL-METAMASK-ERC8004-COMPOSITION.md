@@ -93,6 +93,81 @@ smoke testing), checks every external deployment and registry version, runs the 
 read-only simulations, submits the valid redemption, verifies state and feedback readback, and prints a
 JSON evidence bundle with Lineascan links.
 
+### Run with MetaMask Agent Wallet as the delegate
+
+The same runner can replace the local delegate private key with MetaMask Agent Wallet. This is a signer
+and transaction-submission adapter; the ERC-7710 delegation, deployed Delegation Manager, Hybrid smart
+account, agreement kernel, and ERC-8004 registries remain unchanged.
+
+MetaMask Agent Wallet currently requires its own Node 22 runtime while this repository remains pinned to
+Node 20. Point the runner at the Agent Wallet CLI entry point and a supported Node binary explicitly:
+
+```bash
+mm login
+mm init --wallet server-wallet --mode guard
+mm doctor --json
+
+cd contracts
+PRIVATE_KEY=<funded-owner-key> \
+LINEA_SEPOLIA_RPC_URL=<rpc-url> \
+AGENT_WALLET_NODE_BIN=<node-22.18-or-newer-binary> \
+AGENT_WALLET_CLI_BIN=<path-to-mm> \
+npm run trace:agent-wallet-composition
+```
+
+In Agent Wallet mode the runner:
+
+1. refuses to continue unless `mm doctor` reports an authenticated, initialized wallet;
+2. resolves the active Agent Wallet EVM address and makes it the ERC-7710 delegate;
+3. funds that address with Linea Sepolia ETH when necessary;
+4. has Agent Wallet register its own ERC-8004 identity and verifies `getAgentWallet(agentId)` matches;
+5. submits the exact `redeemDelegations(...)` transaction through `mm wallet send-transaction`;
+6. verifies the transaction sender, agreement events, state transition, ERC-8004 event, and readback.
+
+Set `AGENT_WALLET_ADDRESS` only when the CLI address lookup cannot be used; the transaction sender is
+still checked against that value. The CLI transaction is submitted with `--wait`, so server-wallet MFA,
+policy denial, and timeout failures stop the trace rather than producing partial success evidence.
+
+### Mock Agent Wallet locally without Early Access
+
+Until the live service is available, run the same Agent Wallet integration path against a pinned local
+Linea Sepolia fork:
+
+```bash
+cd contracts
+npm run trace:mock-agent-wallet-composition
+```
+
+The harness replaces only the `mm doctor`, `mm wallet address`, and
+`mm wallet send-transaction` boundary. It uses a deterministic local delegate key, but still exercises
+the deployed MetaMask Delegation Manager and ERC-8004 registries, the Hybrid smart account, the
+unchanged agreement engine, exact-calldata caveat enforcement, agent registration, delegated
+redemption, and receipt readback. The evidence bundle identifies this path as
+`mock-agent-wallet-cli`, not MetaMask Agent Wallet.
+
+The mock refuses non-local RPC endpoints, non-zero-value calls, and targets other than the Identity
+Registry and Delegation Manager. It does not reproduce or establish MetaMask's key custody, TEE,
+Guard Mode, policy service, simulation, Blockaid scanning, MEV protection, MFA, availability, or live
+transaction behavior. Revocation remains `SKIPPED` unless the separate bundler-backed trace is run.
+
+### Add a real ERC-7710 disable/revocation trace
+
+Set `BUNDLER_RPC_URL` to a Linea Sepolia ERC-4337 bundler endpoint. After the successful composition the
+runner funds the Hybrid smart account, sends a `disableDelegation` user operation, confirms the disabled
+delegation hash in the deployed Delegation Manager, and proves that the same redemption is rejected.
+
+```bash
+PRIVATE_KEY=<funded-owner-key> \
+LINEA_SEPOLIA_RPC_URL=<rpc-url> \
+BUNDLER_RPC_URL=<linea-sepolia-bundler-rpc> \
+AGENT_WALLET_NODE_BIN=<node-22.18-or-newer-binary> \
+AGENT_WALLET_CLI_BIN=<path-to-mm> \
+npm run trace:agent-wallet-composition
+```
+
+Without `BUNDLER_RPC_URL`, the evidence bundle reports revocation as `SKIPPED`; it never upgrades a
+read-only failure simulation into an on-chain revocation claim.
+
 ## Public Linea Sepolia result
 
 The public trace passed on 2026-07-14 at block `30842239`. The machine-readable output, including all

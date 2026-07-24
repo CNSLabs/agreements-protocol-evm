@@ -5,13 +5,16 @@
 //
 // Required:
 //   PRIVATE_KEY=<funded owner key>
-//   DELEGATE_PRIVATE_KEY=<distinct delegate key; the script funds it if needed>
 //   LINEA_SEPOLIA_RPC_URL=<RPC URL>
+//   DELEGATE_PRIVATE_KEY=<distinct delegate key; the script funds it if needed>
+//     or DELEGATE_MODE=agent-wallet with an authenticated and initialized `mm` CLI.
 //
 // Run:
 //   npm run trace:real-composition
 
 import { ethers, network } from "hardhat";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import {
   ExecutionMode,
   Implementation,
@@ -22,6 +25,7 @@ import {
   toMetaMaskSmartAccount,
 } from "@metamask/smart-accounts-kit";
 import { DelegationManager } from "@metamask/smart-accounts-kit/contracts";
+import { hashDelegation } from "@metamask/smart-accounts-kit/utils";
 import {
   type Address,
   type Hex,
@@ -30,6 +34,7 @@ import {
   http,
   parseEther,
 } from "viem";
+import { createBundlerClient } from "viem/account-abstraction";
 import { lineaSepolia } from "viem/chains";
 import { privateKeyToAccount } from "viem/accounts";
 
@@ -46,6 +51,107 @@ const START = k("START");
 const DONE = k("DONE");
 const ADVANCE = k("advance");
 const AUTHORIZED_SENDER = k("authorizedSender");
+const execFileAsync = promisify(execFile);
+
+type JsonObject = Record<string, unknown>;
+
+function isJsonObject(value: unknown): value is JsonObject {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function findStringByKey(value: unknown, keys: Set<string>): string | undefined {
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const match = findStringByKey(item, keys);
+      if (match) return match;
+    }
+    return undefined;
+  }
+  if (!isJsonObject(value)) return undefined;
+  for (const [key, child] of Object.entries(value)) {
+    if (keys.has(key) && typeof child === "string") return child;
+  }
+  for (const child of Object.values(value)) {
+    const match = findStringByKey(child, keys);
+    if (match) return match;
+  }
+  return undefined;
+}
+
+async function runAgentWalletCommand(args: string[]): Promise<unknown> {
+  const cliBin = process.env.AGENT_WALLET_CLI_BIN || "mm";
+  const nodeBin = process.env.AGENT_WALLET_NODE_BIN;
+  const command = nodeBin || cliBin;
+  const commandArgs = nodeBin ? [cliBin, ...args, "--json"] : [...args, "--json"];
+  try {
+    const result = await execFileAsync(command, commandArgs, {
+      env: process.env,
+      maxBuffer: 10 * 1024 * 1024,
+      timeout: 11 * 60 * 1000,
+    });
+    const stdout = String(result.stdout).trim();
+    const parsed = JSON.parse(stdout) as JsonObject;
+    if (parsed.ok !== true) {
+      throw new Error(`Agent Wallet command failed: ${stdout}`);
+    }
+    return parsed.data;
+  } catch (error) {
+    const detail = error as Error & { stderr?: string | Buffer; stdout?: string | Buffer };
+    const output = String(detail.stderr || detail.stdout || "").trim();
+    const operation = args.slice(0, 2).join(" ");
+    throw new Error(
+      `Agent Wallet command '${operation}' failed${output ? `: ${output}` : ""}`,
+      { cause: error },
+    );
+  }
+}
+
+async function requireReadyAgentWallet(): Promise<void> {
+  const doctor = await runAgentWalletCommand(["doctor"]);
+  if (!isJsonObject(doctor) || doctor.authenticated !== true || doctor.initialized !== true) {
+    throw new Error(
+      "MetaMask Agent Wallet is not ready; run `mm login`, `mm init --wallet server-wallet --mode guard`, and `mm doctor` first",
+    );
+  }
+}
+
+async function resolveAgentWalletAddress(): Promise<Address> {
+  const configured = process.env.AGENT_WALLET_ADDRESS;
+  const rawAddress = configured || findStringByKey(
+    await runAgentWalletCommand(["wallet", "address"]),
+    new Set(["address", "evmAddress"]),
+  );
+  if (!rawAddress || !ethers.isAddress(rawAddress)) {
+    throw new Error("MetaMask Agent Wallet did not return a valid EVM address");
+  }
+  return ethers.getAddress(rawAddress) as Address;
+}
+
+async function sendAgentWalletTransaction(
+  to: Address,
+  data: Hex,
+  intent: string,
+): Promise<Hex> {
+  const result = await runAgentWalletCommand([
+    "wallet",
+    "send-transaction",
+    "--chain-id",
+    String(lineaSepolia.id),
+    "--payload",
+    JSON.stringify({ to, data, value: "0x0" }),
+    "--intent",
+    intent,
+    "--wait",
+  ]);
+  const hash = findStringByKey(
+    result,
+    new Set(["hash", "txHash", "transactionHash"]),
+  );
+  if (!hash || !/^0x[0-9a-fA-F]{64}$/.test(hash)) {
+    throw new Error("MetaMask Agent Wallet did not return a transaction hash");
+  }
+  return hash as Hex;
+}
 
 async function main() {
   const isLocalFork =
@@ -57,14 +163,32 @@ async function main() {
   }
   const ownerPrivateKey = process.env.PRIVATE_KEY as Hex | undefined;
   const delegatePrivateKey = process.env.DELEGATE_PRIVATE_KEY as Hex | undefined;
-  if (!ownerPrivateKey || !delegatePrivateKey) {
-    throw new Error("PRIVATE_KEY and DELEGATE_PRIVATE_KEY are required");
+  const delegateMode = process.env.DELEGATE_MODE || "private-key";
+  const useAgentWallet = delegateMode === "agent-wallet";
+  const agentWalletProviderLabel =
+    process.env.AGENT_WALLET_PROVIDER_LABEL || "metamask-agent-wallet";
+  if (!ownerPrivateKey || (!useAgentWallet && !delegatePrivateKey)) {
+    throw new Error(
+      "PRIVATE_KEY and either DELEGATE_PRIVATE_KEY or DELEGATE_MODE=agent-wallet are required",
+    );
+  }
+  if (delegateMode !== "private-key" && !useAgentWallet) {
+    throw new Error("DELEGATE_MODE must be 'private-key' or 'agent-wallet'");
+  }
+  if (!isLocalFork && agentWalletProviderLabel.startsWith("mock-")) {
+    throw new Error("Mock Agent Wallet providers are restricted to the explicit localhost fork");
   }
 
   const ownerAccount = privateKeyToAccount(ownerPrivateKey);
-  const delegateAccount = privateKeyToAccount(delegatePrivateKey);
-  if (ownerAccount.address.toLowerCase() === delegateAccount.address.toLowerCase()) {
-    throw new Error("DELEGATE_PRIVATE_KEY must identify a distinct account");
+  const delegateAccount = delegatePrivateKey
+    ? privateKeyToAccount(delegatePrivateKey)
+    : undefined;
+  if (useAgentWallet) await requireReadyAgentWallet();
+  const delegateAddress = useAgentWallet
+    ? await resolveAgentWalletAddress()
+    : delegateAccount!.address;
+  if (ownerAccount.address.toLowerCase() === delegateAddress.toLowerCase()) {
+    throw new Error("The delegate must identify a distinct account");
   }
 
   const rpcUrl = isLocalFork
@@ -77,11 +201,9 @@ async function main() {
     chain: lineaSepolia,
     transport,
   });
-  const delegateWallet = createWalletClient({
-    account: delegateAccount,
-    chain: lineaSepolia,
-    transport,
-  });
+  const delegateWallet = delegateAccount
+    ? createWalletClient({ account: delegateAccount, chain: lineaSepolia, transport })
+    : undefined;
   const [hardhatOwner] = await ethers.getSigners();
   if (hardhatOwner.address.toLowerCase() !== ownerAccount.address.toLowerCase()) {
     throw new Error("Hardhat signer does not match PRIVATE_KEY");
@@ -120,11 +242,11 @@ async function main() {
   }
 
   const minimumDelegateBalance = parseEther("0.005");
-  const delegateBalance = await publicClient.getBalance({ address: delegateAccount.address });
+  const delegateBalance = await publicClient.getBalance({ address: delegateAddress });
   let delegateFundingHash: Hex | undefined;
   if (delegateBalance < minimumDelegateBalance) {
     delegateFundingHash = await ownerWallet.sendTransaction({
-      to: delegateAccount.address,
+      to: delegateAddress,
       value: minimumDelegateBalance - delegateBalance,
     });
     await publicClient.waitForTransactionReceipt({ hash: delegateFundingHash });
@@ -147,10 +269,46 @@ async function main() {
   const register = identity.getFunction("register(string)");
   const agentUri =
     process.env.ERC8004_AGENT_URI ||
-    "data:application/json,{\"name\":\"Agreement composition trace provider\"}";
-  const agentId = await register.staticCall(agentUri);
-  const registerTx = await register(agentUri);
-  await registerTx.wait();
+    `data:application/json,${encodeURIComponent(JSON.stringify({
+      name: useAgentWallet
+        ? "MetaMask Agent Wallet agreement composition trace"
+        : "Agreement composition trace provider",
+    }))}`;
+  let agentRegistrationHash: Hex;
+  if (useAgentWallet) {
+    const registerCalldata = identity.interface.encodeFunctionData("register", [agentUri]) as Hex;
+    agentRegistrationHash = await sendAgentWalletTransaction(
+      IDENTITY_REGISTRY,
+      registerCalldata,
+      "Register this MetaMask Agent Wallet as the ERC-8004 identity used by the agreement composition trace",
+    );
+  } else {
+    const registerTx = await register(agentUri);
+    agentRegistrationHash = registerTx.hash as Hex;
+  }
+  const registrationReceipt = await publicClient.waitForTransactionReceipt({
+    hash: agentRegistrationHash,
+  });
+  if (registrationReceipt.status !== "success") {
+    throw new Error("ERC-8004 agent registration reverted");
+  }
+  const registeredEvent = registrationReceipt.logs.flatMap((log) => {
+    try {
+      const event = identity.interface.parseLog({ data: log.data, topics: [...log.topics] });
+      return event?.name === "Registered" ? [event] : [];
+    } catch {
+      return [];
+    }
+  })[0];
+  if (!registeredEvent) throw new Error("ERC-8004 registration did not emit Registered");
+  const agentId = registeredEvent.args.agentId as bigint;
+  const registeredAgentWallet = await identity.getAgentWallet(agentId);
+  if (
+    useAgentWallet &&
+    registeredAgentWallet.toLowerCase() !== delegateAddress.toLowerCase()
+  ) {
+    throw new Error("ERC-8004 agent wallet does not match the MetaMask Agent Wallet delegate");
+  }
 
   const implementation = await ethers.deployContract("AgreementEngine", hardhatOwner);
   await implementation.waitForDeployment();
@@ -226,7 +384,7 @@ async function main() {
   ]) as Hex;
 
   const delegation = createDelegation({
-    to: delegateAccount.address,
+    to: delegateAddress,
     from: smartAccount.address,
     environment,
     scope: {
@@ -249,7 +407,7 @@ async function main() {
   let directCallRejected = false;
   try {
     await publicClient.call({
-      account: delegateAccount.address,
+      account: delegateAddress,
       to: agreementAddress as Address,
       data: submitCalldata,
     });
@@ -267,7 +425,7 @@ async function main() {
   let wrongCalldataRejected = false;
   try {
     await publicClient.call({
-      account: delegateAccount.address,
+      account: delegateAddress,
       to: environment.DelegationManager as Address,
       data: wrongRedemption,
     });
@@ -276,14 +434,23 @@ async function main() {
   }
   if (!wrongCalldataRejected) throw new Error("Wrong calldata unexpectedly passed");
 
-  const compositionHash = await delegateWallet.sendTransaction({
-    to: environment.DelegationManager as Address,
-    data: redemption,
-  });
+  const compositionHash = useAgentWallet
+    ? await sendAgentWalletTransaction(
+        environment.DelegationManager as Address,
+        redemption,
+        "Redeem the exact ERC-7710 delegation that advances the agreement and writes its ERC-8004 lifecycle receipt",
+      )
+    : await delegateWallet!.sendTransaction({
+        to: environment.DelegationManager as Address,
+        data: redemption,
+      });
   const compositionReceipt = await publicClient.waitForTransactionReceipt({
     hash: compositionHash,
   });
   if (compositionReceipt.status !== "success") throw new Error("Composition transaction reverted");
+  if (compositionReceipt.from.toLowerCase() !== delegateAddress.toLowerCase()) {
+    throw new Error("Composition transaction was not sent by the configured delegate");
+  }
   if ((await agreement.currentState()) !== DONE) throw new Error("Agreement did not reach DONE");
 
   const parsedEngineEvents = compositionReceipt.logs.flatMap((log) => {
@@ -326,6 +493,81 @@ async function main() {
     throw new Error("ERC-8004 feedback readback did not match the lifecycle receipt");
   }
 
+  let smartAccountFundingHash: Hex | undefined;
+  let revocationEvidence: JsonObject = {
+    status: "SKIPPED",
+    reason: "Set BUNDLER_RPC_URL to submit a real disableDelegation user operation",
+  };
+  const bundlerRpcUrl = process.env.BUNDLER_RPC_URL;
+  if (bundlerRpcUrl) {
+    const minimumSmartAccountBalance = parseEther("0.01");
+    const smartAccountBalance = await publicClient.getBalance({
+      address: smartAccount.address,
+    });
+    if (smartAccountBalance < minimumSmartAccountBalance) {
+      smartAccountFundingHash = await ownerWallet.sendTransaction({
+        to: smartAccount.address,
+        value: minimumSmartAccountBalance - smartAccountBalance,
+      });
+      await publicClient.waitForTransactionReceipt({ hash: smartAccountFundingHash });
+    }
+
+    const disableCalldata = DelegationManager.encode.disableDelegation({
+      delegation: signedDelegation,
+    });
+    const bundlerClient = createBundlerClient({
+      account: smartAccount,
+      client: publicClient,
+      transport: http(bundlerRpcUrl),
+    });
+    const userOperationHash = await bundlerClient.sendUserOperation({
+      calls: [
+        {
+          to: environment.DelegationManager as Address,
+          data: disableCalldata,
+          value: 0n,
+        },
+      ],
+    });
+    const userOperationReceipt = await bundlerClient.waitForUserOperationReceipt({
+      hash: userOperationHash,
+      timeout: 5 * 60 * 1000,
+    });
+    if (!userOperationReceipt.success) {
+      throw new Error("Delegation disable user operation reverted");
+    }
+
+    const delegationHash = hashDelegation(signedDelegation);
+    const disabled = await DelegationManager.read.disabledDelegations({
+      client: publicClient,
+      contractAddress: environment.DelegationManager as Address,
+      delegationHash,
+    });
+    if (!disabled) throw new Error("Delegation Manager did not persist the disabled delegation");
+
+    let postRevocationRedemptionRejected = false;
+    try {
+      await publicClient.call({
+        account: delegateAddress,
+        to: environment.DelegationManager as Address,
+        data: redemption,
+      });
+    } catch {
+      postRevocationRedemptionRejected = true;
+    }
+    if (!postRevocationRedemptionRejected) {
+      throw new Error("The disabled delegation remained redeemable");
+    }
+    revocationEvidence = {
+      status: "PASS",
+      delegationHash,
+      disabled,
+      postRevocationRedemptionRejected,
+      userOperationHash,
+      transaction: `${explorer}${userOperationReceipt.receipt.transactionHash}`,
+    };
+  }
+
   console.log(
     JSON.stringify(
       {
@@ -337,9 +579,12 @@ async function main() {
           erc8004IdentityRegistry: await identity.getVersion(),
           erc8004ReputationRegistry: await reputation.getVersion(),
         },
+        delegateExecution: useAgentWallet
+          ? agentWalletProviderLabel
+          : "local-private-key",
         addresses: {
           owner: ownerAccount.address,
-          delegate: delegateAccount.address,
+          delegate: delegateAddress,
           delegationManager: environment.DelegationManager,
           smartAccount: smartAccount.address,
           engineImplementation: await implementation.getAddress(),
@@ -348,10 +593,12 @@ async function main() {
           identityRegistry: IDENTITY_REGISTRY,
           reputationRegistry: REPUTATION_REGISTRY,
           erc8004AgentId: agentId.toString(),
+          erc8004AgentWallet: registeredAgentWallet,
           erc8004ClientAddress: agreementAddress,
         },
         negativeSimulations: { directCallRejected, wrongCalldataRejected },
         sameTransactionEvents: ["InputAccepted", "ActionExecuted", "NewFeedback"],
+        revocation: revocationEvidence,
         transactions: {
           smartAccountDeployment: smartAccountDeploymentHash
             ? `${explorer}${smartAccountDeploymentHash}`
@@ -359,7 +606,12 @@ async function main() {
           delegateFunding: delegateFundingHash
             ? `${explorer}${delegateFundingHash}`
             : "already funded",
-          agentRegistration: `${explorer}${registerTx.hash}`,
+          smartAccountFunding: smartAccountFundingHash
+            ? `${explorer}${smartAccountFundingHash}`
+            : bundlerRpcUrl
+              ? "already funded"
+              : "not requested",
+          agentRegistration: `${explorer}${agentRegistrationHash}`,
           engineDeployment: `${explorer}${implementation.deploymentTransaction()!.hash}`,
           factoryDeployment: `${explorer}${factoryContract.deploymentTransaction()!.hash}`,
           agreementCreation: `${explorer}${createAgreementTx.hash}`,
