@@ -1,6 +1,7 @@
 # Real MetaMask delegation → agreement → ERC-8004 composition
 
-Status: **real-contract fork proof and public Linea Sepolia trace pass**
+Status: **real-contract fork proof, live MetaMask Agent Wallet composition, and public ERC-7710
+delegated-authority disable trace pass**
 
 ## Problem and scope
 
@@ -77,8 +78,9 @@ HARDHAT_PORT=18545 npm run test:fork -- test/real-metamask-erc8004-composition.f
 ## Run the public trace
 
 `contracts/scripts/real-metamask-erc8004-live.ts` performs the same successful composition against
-public Linea Sepolia. It requires one funded owner key and a distinct delegate key; the script funds the
-delegate if its testnet balance is low.
+public Linea Sepolia. In private-key mode it requires one funded owner key and a distinct delegate key;
+the script funds the delegate if its testnet balance is low. Agent Wallet mode, documented below,
+replaces the delegate private key with MetaMask Agent Wallet.
 
 ```bash
 cd contracts
@@ -128,10 +130,10 @@ Set `AGENT_WALLET_ADDRESS` only when the CLI address lookup cannot be used; the 
 still checked against that value. The CLI transaction is submitted with `--wait`, so server-wallet MFA,
 policy denial, and timeout failures stop the trace rather than producing partial success evidence.
 
-### Mock Agent Wallet locally without Early Access
+### Smoke-test the Agent Wallet adapter locally
 
-Until the live service is available, run the same Agent Wallet integration path against a pinned local
-Linea Sepolia fork:
+For offline development, run the same Agent Wallet integration path against a pinned local Linea
+Sepolia fork:
 
 ```bash
 cd contracts
@@ -151,7 +153,7 @@ Guard Mode, policy service, simulation, Blockaid scanning, MEV protection, MFA, 
 transaction behavior. Delegated-authority disable remains `SKIPPED` unless the separate
 bundler-backed trace is run.
 
-### Add a real ERC-7710 delegated-authority disable trace
+### Run a real ERC-7710 delegated-authority disable trace
 
 Set `BUNDLER_RPC_URL` to a Linea Sepolia ERC-4337 bundler endpoint. After the successful composition the
 runner confirms that the bundler supports the Hybrid account's EntryPoint, funds the smart account,
@@ -174,7 +176,9 @@ Without `BUNDLER_RPC_URL`, the evidence bundle reports `delegationDisable` as `S
 upgrades a read-only failure simulation into an on-chain authority-revocation claim. Disabling delegated
 authority does not revoke or correct the ERC-8004 feedback record.
 
-## Public Linea Sepolia result
+## Public Linea Sepolia results
+
+### 2026-07-14 — real contracts with a local-key delegate
 
 The public trace passed on 2026-07-14 at block `30842239`. The machine-readable output, including all
 addresses, block numbers, timestamps, and transaction hashes, is preserved in
@@ -192,19 +196,46 @@ logs include `InputAccepted` and `ActionExecuted` from the unchanged agreement c
 from the real ERC-8004 Reputation Registry. The feedback's `clientAddress` is the agreement clone, so the
 receipt is objectively attributable to the agreement that accepted the input.
 
+### 2026-07-24 — MetaMask Agent Wallet composition and delegated-authority disable
+
+The live Agent Wallet trace passed from source commit
+`3ee6d4d30dce5d46854dcab311b56cf8b968b418`. Its machine-readable evidence is preserved in
+[`evidence/linea-sepolia-metamask-agent-wallet-erc8004-2026-07-24.json`](evidence/linea-sepolia-metamask-agent-wallet-erc8004-2026-07-24.json).
+
+- MetaMask Agent Wallet: [`0x478c...E887`](https://sepolia.lineascan.build/address/0x478c3A0377F6f93BfB3DB5167DC3d7dc8840E887)
+- MetaMask Hybrid smart account: [`0x2bFb...b077`](https://sepolia.lineascan.build/address/0x2bFbC28214D6ff0C9103963545ca30bd533Cb077)
+- Agreement clone: [`0xd046...3A4d`](https://sepolia.lineascan.build/address/0xd0465017fb4A3c603cb3b315C0EF82a3d21E3A4d)
+- ERC-8004 agent: `2`, owned by and registered to the Agent Wallet
+- Composition transaction at block `31077981`: [`0xcdbc...a9a`](https://sepolia.lineascan.build/tx/0xcdbc193bb4cffa2ed874fbf53e0bac618f9da2dcf6936f83e77ad42763693a9a)
+- Delegated-authority disable transaction at block `31077984`: [`0x6ff4...2e36`](https://sepolia.lineascan.build/tx/0x6ff469b2e32bedad238284a700dde4daf2533d3e3a6d3cd6e92142a466d52e36)
+- ERC-4337 user operation: `0x8fdf90b67b674eb6df2d64851c4c2e3d66a0c3527dba0a4cf7a88d6cc978ad1d`
+- Disabled delegation: `0x126d093bf90a3ae270d405d68c8f3928fa6f297a896c3a3918a0f4b6a1c3f449`
+
+The Agent Wallet was the ERC-7710 delegate and sent the composition transaction through MetaMask's
+deployed Delegation Manager. The agreement reached `DONE`, and the same transaction emitted
+`InputAccepted`, `ActionExecuted`, and `NewFeedback`.
+
+The Hybrid smart account then disabled that exact delegation through an ERC-4337 user operation. The
+Delegation Manager's mapping changed from `false` to `true`, the mined transaction emitted the exact
+`DisabledDelegation` event, and a replay failed with `CannotUseADisabledDelegation()` selector
+`0x05baa052`. The replay did not change the agreement or create another feedback record. The original
+ERC-8004 lifecycle feedback remains unrevoked because disabling delegated authority is separate from
+correcting or revoking a reputation record.
+
 ## Acceptance status
 
 | Criterion | Status |
 | --- | --- |
 | Real MetaMask contracts and SDK; no modeled delegation contracts | Pass on pinned fork and public Linea Sepolia |
+| Real MetaMask Agent Wallet as ERC-7710 delegate, transaction sender, and ERC-8004 wallet | Pass on public Linea Sepolia |
 | Real ERC-8004 Identity and Reputation registries | Pass on pinned fork and public Linea Sepolia |
 | Unchanged `AgreementEngine` | Pass |
 | Direct-call and exact-calldata negative cases | Pass on pinned fork and public simulations |
 | Agreement and ERC-8004 events in the same transaction | Pass on pinned fork and public Linea Sepolia |
 | Agreement clone recorded as ERC-8004 `clientAddress` | Pass on pinned fork and public Linea Sepolia |
 | Registry failure rolls the transition back | Pass on pinned fork |
-| Public explorer evidence | Pass |
-| Real on-chain disable/revocation case | Pending a bundler-backed trace |
+| Public explorer evidence for composition and delegated-authority disable | Pass |
+| Real on-chain delegated-authority disable | Pass on public Linea Sepolia: mapping, event, and exact replay error |
 
 ## Options and tradeoffs
 
@@ -230,11 +261,11 @@ required. Otherwise, keep this receipt-only proof as the boundary and defer kern
   transaction hash. The shared transaction and event log provide the atomic join in this proof.
 - The public trace produces persistent testnet state. Its success establishes composition, not production
   key-management, registry-governance, or operational readiness.
-- MetaMask revocation is already proven by the modeled test, but the real-contract revocation flow uses a
-  smart-account user operation and therefore needs a bundler-backed test or a direct EntryPoint harness.
+- `disableDelegation` closes one exact ERC-7710 authority grant. It does not revoke the Agent Wallet,
+  correct the ERC-8004 feedback, or establish account recovery, fleet policy, and mainnet operations.
 
 ## Implementation handoff
 
-The public trace and explorer evidence are complete. The next experiment should answer either real
-MetaMask disable/revocation through a bundler or payment-plus-receipt composition; neither is required to
-establish the composition proven here.
+The live Agent Wallet composition and real delegated-authority disable traces now have public explorer
+and machine-readable evidence. The remaining optional experiment is payment-plus-receipt composition;
+the receipt-only composition proven here requires no engine change.

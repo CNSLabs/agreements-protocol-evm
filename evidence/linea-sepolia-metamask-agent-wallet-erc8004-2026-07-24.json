@@ -1,0 +1,200 @@
+{
+  "schemaVersion": 1,
+  "capturedAt": "2026-07-24T16:35:44.780Z",
+  "result": "PASS",
+  "network": "lineaSepolia",
+  "chainId": 59141,
+  "source": "contracts/scripts/real-metamask-erc8004-live.ts",
+  "sourceCommit": "3ee6d4d30dce5d46854dcab311b56cf8b968b418",
+  "workingTreeDirty": false,
+  "delegateExecution": "metamask-agent-wallet",
+  "versions": {
+    "agentWalletCli": "3.2.0",
+    "smartAccountsKit": "1.6.0",
+    "erc8004IdentityRegistry": "2.0.0",
+    "erc8004ReputationRegistry": "2.0.0"
+  },
+  "actors": {
+    "owner": "0x60D84A7dBF7e7a80725655BDAB7991B4755Ce8d6",
+    "delegate": "0x478c3A0377F6f93BfB3DB5167DC3d7dc8840E887",
+    "transactionSender": "0x478c3A0377F6f93BfB3DB5167DC3d7dc8840E887"
+  },
+  "addresses": {
+    "delegationManager": "0xdb9B1e94B5b69Df7e401DDbedE43491141047dB3",
+    "entryPoint": "0x0000000071727De22E5E9d8BAf0edAc6f37da032",
+    "smartAccount": "0x2bFbC28214D6ff0C9103963545ca30bd533Cb077",
+    "engineImplementation": "0x3d974cCf9E9dee67370114510B93975CF4AF4e7B",
+    "agreementFactory": "0x4BC40df71dF3a91cCdBa8a8Ec15FF65Cf62E1aB7",
+    "agreement": "0xd0465017fb4A3c603cb3b315C0EF82a3d21E3A4d",
+    "identityRegistry": "0x8004A818BFB912233c491871b3d84c89A494BD9e",
+    "reputationRegistry": "0x8004B663056A597Dffe9eCcC1965A193B7388713",
+    "erc8004AgentId": "2",
+    "erc8004AgentWallet": "0x478c3A0377F6f93BfB3DB5167DC3d7dc8840E887",
+    "erc8004ClientAddress": "0xd0465017fb4A3c603cb3b315C0EF82a3d21E3A4d"
+  },
+  "negativeSimulations": {
+    "directCallRejected": true,
+    "wrongCalldataRejected": true
+  },
+  "lifecycleReceipt": {
+    "feedbackIndex": "1",
+    "value": "1",
+    "valueDecimals": 0,
+    "tag1": "agreement-lifecycle",
+    "tag2": "milestone-accepted",
+    "isRevoked": false
+  },
+  "sameTransactionEvents": {
+    "InputAccepted": 1,
+    "ActionExecuted": 1,
+    "NewFeedback": 1
+  },
+  "delegationDisable": {
+    "status": "PASS",
+    "semanticScope": "ERC-7710 delegated authority was disabled; the ERC-8004 feedback record was not revoked or corrected.",
+    "supportedEntryPoints": [
+      "0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789",
+      "0x0000000071727De22E5E9d8BAf0edAc6f37da032",
+      "0x433709009B8330FDa32311DF1C2AFA402eD8D009"
+    ],
+    "delegationHash": "0x126d093bf90a3ae270d405d68c8f3928fa6f297a896c3a3918a0f4b6a1c3f449",
+    "redemptionCalldataHash": "0xa8905f4f2b3cc84f37269d6a8836ff107f6a9e8c2ed445b5b3772ff503765510",
+    "redemptionCalldataBytes": 2212,
+    "disabledBeforeUserOperation": false,
+    "disabledAtPreviousBlock": {
+      "blockNumber": 31077983,
+      "value": false
+    },
+    "disabledAtReceiptBlock": {
+      "blockNumber": 31077984,
+      "value": true
+    },
+    "disabledDelegationEvent": {
+      "observed": true,
+      "topic0": "0xea589ba9473ee1fe77d352c7ed919747715a5d22931b972de9b02a907c66d5dd",
+      "delegationHash": "0x126d093bf90a3ae270d405d68c8f3928fa6f297a896c3a3918a0f4b6a1c3f449",
+      "delegator": "0x2bFbC28214D6ff0C9103963545ca30bd533Cb077",
+      "delegate": "0x478c3A0377F6f93BfB3DB5167DC3d7dc8840E887",
+      "dataHash": "0x465c5eabc2ab83498f5981a0cb022db6fbb6ac7d3b0014b61a804d621ce72ec5",
+      "logIndex": 3
+    },
+    "userOperation": {
+      "hash": "0x8fdf90b67b674eb6df2d64851c4c2e3d66a0c3527dba0a4cf7a88d6cc978ad1d",
+      "sender": "0x2bFbC28214D6ff0C9103963545ca30bd533Cb077",
+      "paymaster": "0x0000000000000000000000000000000000000000",
+      "nonce": "32925792124639261403619442819072",
+      "success": true,
+      "actualGasCost": "14545931644454",
+      "actualGasUsed": "197078",
+      "entryPoint": "0x0000000071727De22E5E9d8BAf0edAc6f37da032",
+      "logIndex": 4
+    },
+    "postDisableReplay": {
+      "method": "eth_call of the exact public composition transaction calldata after the disable transaction",
+      "sourceTransactionHash": "0xcdbc193bb4cffa2ed874fbf53e0bac618f9da2dcf6936f83e77ad42763693a9a",
+      "from": "0x478c3A0377F6f93BfB3DB5167DC3d7dc8840E887",
+      "to": "0xdb9B1e94B5b69Df7e401DDbedE43491141047dB3",
+      "replayAtBlock": 31078037,
+      "rejected": true,
+      "error": "CannotUseADisabledDelegation()",
+      "errorSelector": "0x05baa052"
+    },
+    "postDisableState": {
+      "agreementState": "0xccf30dca4844f1b4e184057cad892f5906da41c5e85bfd0703eaaa4b15e68a3f",
+      "agreementStateLabel": "DONE",
+      "feedbackIndex": "1",
+      "feedbackIsRevoked": false
+    }
+  },
+  "transactions": {
+    "smartAccountDeployment": {
+      "status": "already deployed"
+    },
+    "delegateFunding": {
+      "hash": "0xfc316ba5886966980046c15e4e3271a8f2b169133f9197289bbdec98a279bc36",
+      "url": "https://sepolia.lineascan.build/tx/0xfc316ba5886966980046c15e4e3271a8f2b169133f9197289bbdec98a279bc36",
+      "blockNumber": 31077970,
+      "blockHash": "0x2117f72339b888f74a150e1a166c7883d095142d450133f4e6685cb8a8308759",
+      "timestamp": "2026-07-24T16:31:54.000Z",
+      "status": "success",
+      "gasUsed": "21000"
+    },
+    "agentRegistration": {
+      "hash": "0x200e5395ea1d77ef765fba6f3599867c2d8d2e939f9a421dd0f70e1550b74d41",
+      "url": "https://sepolia.lineascan.build/tx/0x200e5395ea1d77ef765fba6f3599867c2d8d2e939f9a421dd0f70e1550b74d41",
+      "blockNumber": 31077973,
+      "blockHash": "0x8fe5db37c09d799a0eb21bb764b6a5bbd088afdc4eee195e7c8614b5162be81a",
+      "timestamp": "2026-07-24T16:32:05.000Z",
+      "status": "success",
+      "gasUsed": "206676"
+    },
+    "engineDeployment": {
+      "hash": "0x79fa672a43fda78f0a9b0a933d3308ec87d6fed985d08ce137ca661fce81fa0b",
+      "url": "https://sepolia.lineascan.build/tx/0x79fa672a43fda78f0a9b0a933d3308ec87d6fed985d08ce137ca661fce81fa0b",
+      "blockNumber": 31077977,
+      "blockHash": "0x2e731d6b17156cfbba2b4406ccdc48b40c1b85596326ef2d9f864dea24d99e07",
+      "timestamp": "2026-07-24T16:32:20.000Z",
+      "status": "success",
+      "gasUsed": "3812549"
+    },
+    "factoryDeployment": {
+      "hash": "0x3d25ba179f1ce1716828ff60f3ba2fb014fe3382cd19480595c7bbf795e6849b",
+      "url": "https://sepolia.lineascan.build/tx/0x3d25ba179f1ce1716828ff60f3ba2fb014fe3382cd19480595c7bbf795e6849b",
+      "blockNumber": 31077978,
+      "blockHash": "0x9f95943b7d9eeb73bfc2cc8467c3ee52b0d0390bb5cd942713951d82ef8a01b9",
+      "timestamp": "2026-07-24T16:32:24.000Z",
+      "status": "success",
+      "gasUsed": "1629194"
+    },
+    "agreementCreation": {
+      "hash": "0xaa67fd02264f60366bfdd4f7c208a53e1fed50b529d799e54da50ead971380d7",
+      "url": "https://sepolia.lineascan.build/tx/0xaa67fd02264f60366bfdd4f7c208a53e1fed50b529d799e54da50ead971380d7",
+      "blockNumber": 31077979,
+      "blockHash": "0xd37d5abee661af1f2e054bcd0f6539827d25195c556d11c96f3b618472ec6486",
+      "timestamp": "2026-07-24T16:32:28.000Z",
+      "status": "success",
+      "gasUsed": "838416"
+    },
+    "composition": {
+      "hash": "0xcdbc193bb4cffa2ed874fbf53e0bac618f9da2dcf6936f83e77ad42763693a9a",
+      "url": "https://sepolia.lineascan.build/tx/0xcdbc193bb4cffa2ed874fbf53e0bac618f9da2dcf6936f83e77ad42763693a9a",
+      "blockNumber": 31077981,
+      "blockHash": "0x10c3d8e12295e719bf664ee81f29cc9ac6cd41ac4a060995256ecb09f9799444",
+      "timestamp": "2026-07-24T16:32:36.000Z",
+      "status": "success",
+      "gasUsed": "474389"
+    },
+    "smartAccountFunding": {
+      "hash": "0x37ddb731f218881a7af70eeca09aa8ed56c92044291fab5f3a8a65acc22553b0",
+      "url": "https://sepolia.lineascan.build/tx/0x37ddb731f218881a7af70eeca09aa8ed56c92044291fab5f3a8a65acc22553b0",
+      "blockNumber": 31077983,
+      "blockHash": "0x96a66f29868d09bb686026ab29065909c2f650997db9b4a3633aef3ade9a5251",
+      "timestamp": "2026-07-24T16:32:43.000Z",
+      "status": "success",
+      "gasUsed": "25933"
+    },
+    "delegationDisable": {
+      "hash": "0x6ff469b2e32bedad238284a700dde4daf2533d3e3a6d3cd6e92142a466d52e36",
+      "url": "https://sepolia.lineascan.build/tx/0x6ff469b2e32bedad238284a700dde4daf2533d3e3a6d3cd6e92142a466d52e36",
+      "blockNumber": 31077984,
+      "blockHash": "0xd0fa559ca95bf560531265ff3c7e80a05c537031767b12d419e4468d601e7f98",
+      "timestamp": "2026-07-24T16:32:47.000Z",
+      "status": "success",
+      "gasUsed": "192339"
+    }
+  },
+  "independentVerification": {
+    "verifiedAt": "2026-07-24T16:35:44.780Z",
+    "checks": [
+      "Both public receipts have status 1 and confirmed block metadata.",
+      "The composition receipt contains one InputAccepted, one ActionExecuted, and one NewFeedback event.",
+      "The action target is the deployed ERC-8004 Reputation Registry.",
+      "The registered ERC-8004 agent wallet equals the MetaMask Agent Wallet delegate.",
+      "The disabledDelegations mapping is false at block 31077983 and true at block 31077984.",
+      "The disable receipt contains the exact indexed delegation hash, delegator, and delegate plus a successful UserOperationEvent.",
+      "Replaying the exact public composition calldata after disable returns selector 0x05baa052.",
+      "The agreement remains DONE, feedback index remains 1, and the ERC-8004 feedback remains unrevoked."
+    ]
+  },
+  "proofCeiling": "This evidence proves one pinned Linea Sepolia path in which MetaMask Agent Wallet is the ERC-7710 delegate and transaction sender, the agreement transition writes an ERC-8004 feedback receipt, and the Hybrid account later disables that exact delegation through ERC-4337. It does not prove shipped support, production security or revocation operations, arbitrary delegation trees or wallet policies, re-enable or recovery behavior, disable-redeem race handling, broad bundler or account compatibility, mainnet behavior, ERC-8004 feedback correction, partner endorsement, or demand."
+}
