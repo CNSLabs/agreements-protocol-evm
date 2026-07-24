@@ -9,8 +9,10 @@ official ERC-8004 repository for testnets:
 - ERC-8004 source pin: `68fc6765761a10fb26f0692df21c8a6f9d12b1be`
 
 The trace uses ERC-8004 agent `2`, whose owner and registered agent wallet must
-both equal the active MetaMask Agent Wallet. It generates a distinct validator
-key in memory, temporarily funds that validator, and records:
+both equal the active MetaMask Agent Wallet. A configured Linea Sepolia test
+signer acts as the distinct named validator. The runner requires its public
+address in `VALIDATION_PROOF_VALIDATOR_ADDRESS`, verifies that it is neither the
+agent owner nor an approved operator, and records:
 
 1. a mined unauthorized request rejection from the validator;
 2. a successful request from the Agent Wallet;
@@ -21,13 +23,13 @@ key in memory, temporarily funds that validator, and records:
 6. the EIP-1967 implementation slot, runtime bytecode hashes, deployment
    transaction provenance, and pinned source links.
 
-The runner temporarily adds the Validation Registry and the one-run validator
-to the Agent Wallet allowlist and raises the rolling 24-hour outflow limit to
-at least USD 5 so it can fund the validator. On normal control flow it returns
-the validator balance to a 1,000 wei dust ceiling and restores the original
-policy byte-for-byte before emitting PASS. Restoration uses a compare-and-swap
-check and refuses to overwrite an intervening policy change. The validator
-private key is never printed or persisted.
+The runner never writes the Agent Wallet policy. It hashes and reads the policy
+before and after the trace, then refuses to emit PASS unless the policy remains
+byte-for-byte unchanged. The configured validator must already have enough
+Linea Sepolia ETH for the mined controls and response; its private key is
+loaded by Hardhat from the existing runner environment and is never printed or
+persisted by this runner. The validator is a distinct signing address, not an
+independent third party.
 
 Run:
 
@@ -36,7 +38,9 @@ npm --prefix contracts run trace:agent-wallet-validation
 ```
 
 If `mm` is not on `PATH`, or the CLI needs a different Node runtime, set
-`AGENT_WALLET_CLI_BIN` and `AGENT_WALLET_NODE_BIN`.
+`AGENT_WALLET_CLI_BIN` and `AGENT_WALLET_NODE_BIN`. Also set
+`VALIDATION_PROOF_VALIDATOR_ADDRESS` to the public address of the configured
+Linea Sepolia test signer.
 
 The resulting evidence is written to:
 

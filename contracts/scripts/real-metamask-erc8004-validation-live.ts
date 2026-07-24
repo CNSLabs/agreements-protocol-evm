@@ -3,9 +3,10 @@
 // Live Linea Sepolia proof for MetaMask Agent Wallet composition with the
 // ERC-8004 Validation Registry listed in the official testnet address config.
 //
-// The validator key is generated in memory, funded just for this trace, and
-// returned to a dust ceiling before a PASS can be emitted. On normal control
-// flow, the original Agent Wallet policy is restored verbatim.
+// The validator is the configured Linea Sepolia runner signer. It must be
+// distinct from the Agent Wallet and must not be an approved operator for the
+// agent identity. The runner never changes the Agent Wallet policy and refuses
+// to emit PASS unless the policy is still byte-for-byte unchanged at the end.
 
 import { ethers, network } from "hardhat";
 import { execFile } from "node:child_process";
@@ -47,8 +48,6 @@ const EIP1967_IMPLEMENTATION_SLOT =
   "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc";
 const ERROR_STRING_SELECTOR = "0x08c379a0";
 const EXPLICIT_GAS = "0x7a120";
-const VALIDATOR_FUNDING = ethers.parseEther("0.0003");
-const TEMPORARY_OUTFLOW_LIMIT_USD = 5;
 const DONE_STATE = ethers.keccak256(ethers.toUtf8Bytes("DONE"));
 const execFileAsync = promisify(execFile);
 
@@ -69,6 +68,8 @@ const validationAbi = [
 const identityAbi = [
   "function ownerOf(uint256 agentId) view returns (address)",
   "function getAgentWallet(uint256 agentId) view returns (address)",
+  "function getApproved(uint256 agentId) view returns (address)",
+  "function isApprovedForAll(address owner,address operator) view returns (bool)",
   "function getVersion() pure returns (string)",
 ] as const;
 
@@ -213,11 +214,12 @@ async function runAgentWalletCommand(args: string[]): Promise<JsonObject> {
   }
 }
 
-async function requireReadyAgentWallet(): Promise<void> {
+async function requireReadyAgentWallet(): Promise<JsonObject> {
   const doctor = await runAgentWalletCommand(["doctor"]);
   if (doctor.authenticated !== true || doctor.initialized !== true) {
     throw new Error("MetaMask Agent Wallet is not authenticated and initialized");
   }
+  return doctor;
 }
 
 async function resolveAgentWalletAddress(): Promise<string> {
@@ -260,70 +262,6 @@ async function getAgentWalletPolicy(
   return { policy: result.policy, address: expectedAddress };
 }
 
-async function setAgentWalletPolicy(
-  policy: string,
-  expectedAddress: string,
-): Promise<void> {
-  const result = await runAgentWalletCommand([
-    "wallet",
-    "policy",
-    "set",
-    "--policy",
-    policy,
-  ]);
-  if (typeof result.policy !== "string") {
-    throw new Error("MetaMask Agent Wallet did not confirm the updated policy");
-  }
-  assertAgentWalletResult(result, expectedAddress, "Policy update");
-}
-
-function temporaryPolicy(
-  original: string,
-  additionalAddresses: string[],
-): string {
-  const addressesSection = original.match(
-    /addresses:\n  allowlist:\n((?:    - "[^"]+"\n)*)  blocklist:([^\n]*)/,
-  );
-  const outflow = original.match(
-    /(\nevm:\n(?:.*\n)*?  outflow_limits_usd:\n    rolling_24h: )([0-9]+(?:\.[0-9]+)?)/,
-  );
-  if (!addressesSection || !outflow) {
-    throw new Error("Unexpected Agent Wallet policy shape; refusing to rewrite it");
-  }
-  const allowlist = Array.from(
-    addressesSection[1].matchAll(/    - "([^"]+)"\n/g),
-    (match) => match[1].toLowerCase(),
-  );
-  const blocklist = addressesSection[2].toLowerCase();
-  for (const address of additionalAddresses) {
-    if (blocklist.includes(address.toLowerCase())) {
-      throw new Error(
-        `Required proof address ${address} is blocklisted; refusing to alter policy`,
-      );
-    }
-  }
-  let updated = original;
-  const missing = additionalAddresses.filter(
-    (address) => !allowlist.includes(address.toLowerCase()),
-  );
-  if (missing.length > 0) {
-    const insertion = missing
-      .map((address) => `    - "${address.toLowerCase()}"\n`)
-      .join("");
-    const insertionIndex = updated.indexOf("  blocklist:");
-    updated =
-      updated.slice(0, insertionIndex) +
-      insertion +
-      updated.slice(insertionIndex);
-  }
-  const currentLimit = Number(outflow[2]);
-  const proofLimit = Math.max(currentLimit, TEMPORARY_OUTFLOW_LIMIT_USD);
-  return updated.replace(
-    /(\nevm:\n(?:.*\n)*?  outflow_limits_usd:\n    rolling_24h: )([0-9]+(?:\.[0-9]+)?)/,
-    (_match, prefix: string) => `${prefix}${proofLimit}`,
-  );
-}
-
 function policyFingerprint(policy: string): string {
   const wallet = policy.match(/wallet_address:\s*"([^"]+)"/);
   const addresses = policy.match(
@@ -351,25 +289,6 @@ function policyFingerprint(policy: string): string {
     allowedChains,
     rolling24hUsd: Number(outflow[1]),
   });
-}
-
-async function waitForPolicyFingerprint(
-  expectedFingerprint: string,
-  expectedAddress: string,
-  timeoutMs = 15_000,
-): Promise<string> {
-  const deadline = Date.now() + timeoutMs;
-  let lastPolicy = "";
-  while (Date.now() < deadline) {
-    lastPolicy = (await getAgentWalletPolicy(expectedAddress)).policy;
-    if (policyFingerprint(lastPolicy) === expectedFingerprint) {
-      return lastPolicy;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 1_000));
-  }
-  throw new Error(
-    `Agent Wallet policy did not reach the expected semantic state within ${timeoutMs} ms`,
-  );
 }
 
 async function sendAgentWalletTransaction(
@@ -526,6 +445,37 @@ async function bindRevert(
   };
 }
 
+async function bindViewRevert(
+  provider: JsonRpcProvider,
+  to: string,
+  data: string,
+  blockNumber: number,
+  expectedReason: string,
+): Promise<JsonObject> {
+  let revertData: string | undefined;
+  try {
+    await provider.send("eth_call", [
+      { to, data },
+      ethers.toQuantity(blockNumber),
+    ]);
+  } catch (error) {
+    revertData = extractRevertData(error);
+  }
+  const reason = decodeErrorString(revertData);
+  if (reason !== expectedReason) {
+    throw new Error(
+      `View call at block ${blockNumber} returned '${reason || "unknown"}'; expected '${expectedReason}'`,
+    );
+  }
+  return {
+    method: "eth_call at the mined control block",
+    blockNumber,
+    revertData,
+    selector: revertData?.slice(0, 10),
+    error: reason,
+  };
+}
+
 async function gitMetadata(): Promise<{
   commit: string;
   workingTreeDirty: boolean;
@@ -579,8 +529,38 @@ async function main() {
     );
   }
 
-  await requireReadyAgentWallet();
+  const agentWalletDoctor = await requireReadyAgentWallet();
   const agentWallet = await resolveAgentWalletAddress();
+  const [validatorWallet] = await ethers.getSigners();
+  if (!validatorWallet) {
+    throw new Error(
+      "A configured Linea Sepolia signer is required for the distinct validator",
+    );
+  }
+  const validatorAddress = await validatorWallet.getAddress();
+  const configuredValidatorAddress =
+    process.env.VALIDATION_PROOF_VALIDATOR_ADDRESS;
+  if (
+    !configuredValidatorAddress ||
+    !ethers.isAddress(configuredValidatorAddress)
+  ) {
+    throw new Error(
+      "VALIDATION_PROOF_VALIDATOR_ADDRESS must pin the public address of the configured test signer",
+    );
+  }
+  const validatorExpectedAddress = ethers.getAddress(
+    configuredValidatorAddress,
+  );
+  if (
+    validatorAddress.toLowerCase() !== validatorExpectedAddress.toLowerCase()
+  ) {
+    throw new Error(
+      `Configured validator was ${validatorAddress}; expected ${validatorExpectedAddress}`,
+    );
+  }
+  if (validatorAddress.toLowerCase() === agentWallet.toLowerCase()) {
+    throw new Error("Configured validator unexpectedly equals Agent Wallet");
+  }
   const identity = new ethers.Contract(IDENTITY_REGISTRY, identityAbi, provider);
   const validation = new ethers.Contract(
     VALIDATION_REGISTRY,
@@ -611,6 +591,11 @@ async function main() {
     identityVersion,
     implementationSlot,
     preAgentValidations,
+    identityApproved,
+    validatorApprovedForAll,
+    validatorBalance,
+    agentWalletBalance,
+    feeData,
   ] = await Promise.all([
     provider.getCode(IDENTITY_REGISTRY),
     provider.getCode(VALIDATION_REGISTRY),
@@ -622,6 +607,11 @@ async function main() {
     identity.getVersion() as Promise<string>,
     provider.getStorage(VALIDATION_REGISTRY, EIP1967_IMPLEMENTATION_SLOT),
     validation.getAgentValidations(AGENT_ID) as Promise<string[]>,
+    identity.getApproved(AGENT_ID) as Promise<string>,
+    identity.isApprovedForAll(agentWallet, validatorAddress) as Promise<boolean>,
+    provider.getBalance(validatorAddress),
+    provider.getBalance(agentWallet),
+    provider.getFeeData(),
   ]);
 
   const implementation = ethers.getAddress(
@@ -693,6 +683,34 @@ async function main() {
   ] as const) {
     if (code === "0x") throw new Error(`${label} has no deployed bytecode`);
   }
+  if (
+    identityApproved.toLowerCase() === validatorAddress.toLowerCase() ||
+    validatorApprovedForAll
+  ) {
+    throw new Error(
+      "Configured validator is already authorized for agent 2; unauthorized-request control would be invalid",
+    );
+  }
+  if (validatorBalance === 0n) {
+    throw new Error("Configured validator has no Linea Sepolia balance for gas");
+  }
+  const proofGasPrice = feeData.maxFeePerGas ?? feeData.gasPrice;
+  if (!proofGasPrice) {
+    throw new Error("RPC did not return a gas price for proof preflight");
+  }
+  const validatorGasBudget = proofGasPrice * 500_000n * 5n * 2n;
+  const agentWalletGasBudget =
+    proofGasPrice * BigInt(EXPLICIT_GAS) * 2n * 2n;
+  if (validatorBalance < validatorGasBudget) {
+    throw new Error(
+      `Configured validator balance ${validatorBalance} is below the conservative proof gas budget ${validatorGasBudget}`,
+    );
+  }
+  if (agentWalletBalance < agentWalletGasBudget) {
+    throw new Error(
+      `Agent Wallet balance ${agentWalletBalance} is below the conservative proof gas budget ${agentWalletGasBudget}`,
+    );
+  }
 
   const subjectReceipt = await provider.getTransactionReceipt(
     SUBJECT_TRANSACTION,
@@ -759,11 +777,6 @@ async function main() {
     );
   }
 
-  const validatorWallet = ethers.Wallet.createRandom().connect(provider);
-  if (validatorWallet.address.toLowerCase() === agentWallet.toLowerCase()) {
-    throw new Error("Ephemeral validator unexpectedly equals Agent Wallet");
-  }
-
   const capturedAt = new Date().toISOString();
   const requestDocument: JsonObject = {
     schema: "urn:shodai:erc8004-validation-request:1",
@@ -772,7 +785,7 @@ async function main() {
     chainId: CHAIN_ID,
     agentId: AGENT_ID.toString(),
     agentWallet,
-    validator: validatorWallet.address,
+    validator: validatorAddress,
     subject: {
       transactionHash: SUBJECT_TRANSACTION,
       agreement: SUBJECT_AGREEMENT,
@@ -784,20 +797,28 @@ async function main() {
   const responseDocument: JsonObject = {
     schema: "urn:shodai:erc8004-validation-response:1",
     requestHash: requestPayload.hash,
-    validator: validatorWallet.address,
+    validator: validatorAddress,
     response: 100,
     tag: "agreement-lifecycle",
     finding:
       "Validated against the referenced public transaction receipt and on-chain state.",
   };
   const responsePayload = dataUri(responseDocument);
+  const unauthorizedPayload = dataUri({
+    schema: "urn:shodai:erc8004-negative-control:1",
+    capturedAt,
+    control: "unauthorized-request",
+    agentId: AGENT_ID.toString(),
+    validator: validatorAddress,
+  });
   const zeroValidatorPayload = dataUri({
     schema: "urn:shodai:erc8004-negative-control:1",
+    capturedAt,
     control: "zero-validator",
     requestHash: requestPayload.hash,
   });
   const preValidatorRequests = (await validation.getValidatorRequests(
-    validatorWallet.address,
+    validatorAddress,
   )) as string[];
   if (
     preAgentValidations.some(
@@ -812,74 +833,26 @@ async function main() {
 
   const originalPolicyRecord = await getAgentWalletPolicy(agentWallet);
   const originalPolicy = originalPolicyRecord.policy;
-  const proofPolicy = temporaryPolicy(originalPolicy, [
-    VALIDATION_REGISTRY,
-    validatorWallet.address,
-  ]);
   const originalPolicyFingerprint = policyFingerprint(originalPolicy);
-  const proofPolicyFingerprint = policyFingerprint(proofPolicy);
-  let policyMutationAttempted = false;
-  let policyRestored = false;
-  let sweepRecord: JsonObject = {
-    attempted: false,
-    reason: "Proof did not reach validator sweep",
-  };
+  const originalPolicySha256 = ethers.sha256(
+    ethers.toUtf8Bytes(originalPolicy),
+  );
+  let finalPolicyFingerprint = "";
+  let finalPolicySha256 = "";
+  let policyUnchanged = false;
+  let validatorBalanceAfter = validatorBalance;
+  let agentWalletBalanceAfter = agentWalletBalance;
   let proof: JsonObject | undefined;
   let runError: unknown;
 
-  const restoreOriginalPolicy = async (): Promise<void> => {
-    const current = (await getAgentWalletPolicy(agentWallet)).policy;
-    const currentFingerprint = policyFingerprint(current);
-    if (currentFingerprint === originalPolicyFingerprint) {
-      policyRestored = true;
-      return;
-    }
-    if (currentFingerprint !== proofPolicyFingerprint) {
-      throw new Error(
-        "Agent Wallet policy changed concurrently; refusing to overwrite it. Manual reconciliation is required.",
-      );
-    }
-    await setAgentWalletPolicy(originalPolicy, agentWallet);
-    const restoredPolicy = await waitForPolicyFingerprint(
-      originalPolicyFingerprint,
-      agentWallet,
-    );
-    policyRestored = restoredPolicy === originalPolicy;
-    if (!policyRestored) {
-      throw new Error("Original Agent Wallet policy did not round-trip exactly");
-    }
-  };
-
   try {
-    // From this point onward, always attempt restoration: a remote policy
-    // update can succeed even if the CLI response is interrupted.
-    policyMutationAttempted = true;
-    await setAgentWalletPolicy(proofPolicy, agentWallet);
-    await waitForPolicyFingerprint(proofPolicyFingerprint, agentWallet);
-
-    const funding = await sendAgentWalletTransaction(
-      agentWallet,
-      validatorWallet.address,
-      "0x",
-      VALIDATOR_FUNDING,
-      "Fund a one-run distinct ERC-8004 validator EOA on Linea Sepolia",
-      "0x5208",
-    );
-    const fundingReceipt = await assertMinedStatus(provider, funding.hash, 1);
-    await assertTransactionBinding(provider, fundingReceipt, {
-      from: agentWallet,
-      to: validatorWallet.address,
-      data: "0x",
-      value: VALIDATOR_FUNDING,
-    });
-
     const unauthorizedRequestData = validationInterface.encodeFunctionData(
       "validationRequest",
       [
-        validatorWallet.address,
+        validatorAddress,
         AGENT_ID,
-        requestPayload.uri,
-        requestPayload.hash,
+        unauthorizedPayload.uri,
+        unauthorizedPayload.hash,
       ],
     );
     const unauthorizedTx = await validatorWallet.sendTransaction({
@@ -893,16 +866,55 @@ async function main() {
       0,
     );
     await assertTransactionBinding(provider, unauthorizedReceipt, {
-      from: validatorWallet.address,
+      from: validatorAddress,
       to: VALIDATION_REGISTRY,
       data: unauthorizedRequestData,
       value: 0n,
     });
+    const unauthorizedStatusData = validationInterface.encodeFunctionData(
+      "getValidationStatus",
+      [unauthorizedPayload.hash],
+    );
+    const [
+      unauthorizedAgentHashes,
+      unauthorizedValidatorHashes,
+      unauthorizedUnknownBinding,
+    ] = await Promise.all([
+      validation.getAgentValidations(AGENT_ID, {
+        blockTag: unauthorizedReceipt.blockNumber,
+      }) as Promise<string[]>,
+      validation.getValidatorRequests(validatorAddress, {
+        blockTag: unauthorizedReceipt.blockNumber,
+      }) as Promise<string[]>,
+      bindViewRevert(
+        provider,
+        VALIDATION_REGISTRY,
+        unauthorizedStatusData,
+        unauthorizedReceipt.blockNumber,
+        "unknown",
+      ),
+    ]);
+    if (
+      unauthorizedAgentHashes.length !== preAgentValidations.length ||
+      unauthorizedValidatorHashes.length !== preValidatorRequests.length ||
+      unauthorizedAgentHashes.some(
+        (hash) =>
+          hash.toLowerCase() === unauthorizedPayload.hash.toLowerCase(),
+      ) ||
+      unauthorizedValidatorHashes.some(
+        (hash) =>
+          hash.toLowerCase() === unauthorizedPayload.hash.toLowerCase(),
+      )
+    ) {
+      throw new Error(
+        "Unauthorized request control changed a Validation Registry index",
+      );
+    }
 
     const requestData = validationInterface.encodeFunctionData(
       "validationRequest",
       [
-        validatorWallet.address,
+        validatorAddress,
         AGENT_ID,
         requestPayload.uri,
         requestPayload.hash,
@@ -933,24 +945,32 @@ async function main() {
       requestValidatorRequests,
       requestBlockOwner,
       requestBlockAgentWallet,
+      requestBlockApproved,
+      requestBlockApprovedForAll,
     ] = await Promise.all([
       validation.getValidationStatus(requestPayload.hash, {
         blockTag: requestReceipt.blockNumber,
       }),
       validation.getSummary(
         AGENT_ID,
-        [validatorWallet.address],
+        [validatorAddress],
         "agreement-lifecycle",
         { blockTag: requestReceipt.blockNumber },
       ),
       validation.getAgentValidations(AGENT_ID, {
         blockTag: requestReceipt.blockNumber,
       }),
-      validation.getValidatorRequests(validatorWallet.address, {
+      validation.getValidatorRequests(validatorAddress, {
         blockTag: requestReceipt.blockNumber,
       }),
       identity.ownerOf(AGENT_ID, { blockTag: requestReceipt.blockNumber }),
       identity.getAgentWallet(AGENT_ID, {
+        blockTag: requestReceipt.blockNumber,
+      }),
+      identity.getApproved(AGENT_ID, {
+        blockTag: requestReceipt.blockNumber,
+      }),
+      identity.isApprovedForAll(agentWallet, validatorAddress, {
         blockTag: requestReceipt.blockNumber,
       }),
     ]);
@@ -964,7 +984,7 @@ async function main() {
     ).length;
     if (
       requestStatus.validatorAddress.toLowerCase() !==
-        validatorWallet.address.toLowerCase() ||
+        validatorAddress.toLowerCase() ||
       requestStatus.agentId !== AGENT_ID ||
       requestStatus.response !== 0n ||
       requestStatus.responseHash !== ethers.ZeroHash ||
@@ -977,27 +997,27 @@ async function main() {
       requestHashOccurrences !== 1 ||
       validatorHashOccurrences !== 1 ||
       requestBlockOwner.toLowerCase() !== agentWallet.toLowerCase() ||
-      requestBlockAgentWallet.toLowerCase() !== agentWallet.toLowerCase()
+      requestBlockAgentWallet.toLowerCase() !== agentWallet.toLowerCase() ||
+      requestBlockApproved.toLowerCase() === validatorAddress.toLowerCase() ||
+      requestBlockApprovedForAll
     ) {
       throw new Error(
         "Block-pinned request state did not match the pending-validation fixture",
       );
     }
 
-    const duplicateTx = await sendAgentWalletTransaction(
-      agentWallet,
-      VALIDATION_REGISTRY,
-      requestData,
-      0n,
-      "Negative control: resubmit an existing ERC-8004 validation request",
-    );
+    const duplicateTx = await validatorWallet.sendTransaction({
+      to: VALIDATION_REGISTRY,
+      data: requestData,
+      gasLimit: 500_000n,
+    });
     const duplicateReceipt = await assertMinedStatus(
       provider,
       duplicateTx.hash,
       0,
     );
     await assertTransactionBinding(provider, duplicateReceipt, {
-      from: agentWallet,
+      from: validatorAddress,
       to: VALIDATION_REGISTRY,
       data: requestData,
       value: 0n,
@@ -1053,7 +1073,7 @@ async function main() {
       0,
     );
     await assertTransactionBinding(provider, overRangeReceipt, {
-      from: validatorWallet.address,
+      from: validatorAddress,
       to: VALIDATION_REGISTRY,
       data: overRangeResponseData,
       value: 0n,
@@ -1068,38 +1088,55 @@ async function main() {
         zeroValidatorPayload.hash,
       ],
     );
-    const zeroValidatorTx = await sendAgentWalletTransaction(
-      agentWallet,
-      VALIDATION_REGISTRY,
-      zeroValidatorRequestData,
-      0n,
-      "Negative control: request ERC-8004 validation from the zero address",
-    );
+    const zeroValidatorTx = await validatorWallet.sendTransaction({
+      to: VALIDATION_REGISTRY,
+      data: zeroValidatorRequestData,
+      gasLimit: 500_000n,
+    });
     const zeroValidatorReceipt = await assertMinedStatus(
       provider,
       zeroValidatorTx.hash,
       0,
     );
     await assertTransactionBinding(provider, zeroValidatorReceipt, {
-      from: agentWallet,
+      from: validatorAddress,
       to: VALIDATION_REGISTRY,
       data: zeroValidatorRequestData,
       value: 0n,
     });
-    const [postControlStatus, postControlSummary, postControlAgentHashes] =
-      await Promise.all([
+    const zeroValidatorStatusData = validationInterface.encodeFunctionData(
+      "getValidationStatus",
+      [zeroValidatorPayload.hash],
+    );
+    const [
+      postControlStatus,
+      postControlSummary,
+      postControlAgentHashes,
+      postControlValidatorHashes,
+      zeroValidatorUnknownBinding,
+    ] = await Promise.all([
         validation.getValidationStatus(requestPayload.hash, {
           blockTag: zeroValidatorReceipt.blockNumber,
         }),
         validation.getSummary(
           AGENT_ID,
-          [validatorWallet.address],
+          [validatorAddress],
           "agreement-lifecycle",
           { blockTag: zeroValidatorReceipt.blockNumber },
         ),
         validation.getAgentValidations(AGENT_ID, {
           blockTag: zeroValidatorReceipt.blockNumber,
         }),
+        validation.getValidatorRequests(validatorAddress, {
+          blockTag: zeroValidatorReceipt.blockNumber,
+        }),
+        bindViewRevert(
+          provider,
+          VALIDATION_REGISTRY,
+          zeroValidatorStatusData,
+          zeroValidatorReceipt.blockNumber,
+          "unknown",
+        ),
       ]);
     if (
       postControlStatus.response !== 0n ||
@@ -1108,13 +1145,19 @@ async function main() {
       postControlStatus.lastUpdate !== requestStatus.lastUpdate ||
       postControlSummary.count !== 0n ||
       postControlSummary.avgResponse !== 0n ||
-      postControlAgentHashes.length !== requestAgentValidations.length
+      postControlAgentHashes.length !== requestAgentValidations.length ||
+      postControlValidatorHashes.length !== requestValidatorRequests.length ||
+      postControlAgentHashes.some(
+        (hash: string) =>
+          hash.toLowerCase() === zeroValidatorPayload.hash.toLowerCase(),
+      ) ||
+      postControlValidatorHashes.some(
+        (hash: string) =>
+          hash.toLowerCase() === zeroValidatorPayload.hash.toLowerCase(),
+      )
     ) {
       throw new Error("A mined rejection control changed Validation Registry state");
     }
-
-    // No later transaction needs the Agent Wallet policy expansion.
-    await restoreOriginalPolicy();
 
     const responseTx = await validatorWallet.sendTransaction({
       to: VALIDATION_REGISTRY,
@@ -1127,7 +1170,7 @@ async function main() {
       1,
     );
     await assertTransactionBinding(provider, responseReceipt, {
-      from: validatorWallet.address,
+      from: validatorAddress,
       to: VALIDATION_REGISTRY,
       data: responseData,
       value: 0n,
@@ -1185,14 +1228,14 @@ async function main() {
       }),
       validation.getSummary(
         AGENT_ID,
-        [validatorWallet.address],
+        [validatorAddress],
         "agreement-lifecycle",
         { blockTag: responseReceipt.blockNumber },
       ),
       validation.getAgentValidations(AGENT_ID, {
         blockTag: responseReceipt.blockNumber,
       }),
-      validation.getValidatorRequests(validatorWallet.address, {
+      validation.getValidatorRequests(validatorAddress, {
         blockTag: responseReceipt.blockNumber,
       }),
       bindRevert(provider, unauthorizedReceipt, "Not authorized"),
@@ -1212,7 +1255,7 @@ async function main() {
     ).length;
     if (
       status.validatorAddress.toLowerCase() !==
-        validatorWallet.address.toLowerCase() ||
+        validatorAddress.toLowerCase() ||
       status.agentId !== AGENT_ID ||
       status.response !== 100n ||
       status.responseHash.toLowerCase() !==
@@ -1229,7 +1272,17 @@ async function main() {
       agentValidations.length !== preAgentValidations.length + 1 ||
       validatorRequests.length !== preValidatorRequests.length + 1 ||
       finalAgentOccurrences !== 1 ||
-      finalValidatorOccurrences !== 1
+      finalValidatorOccurrences !== 1 ||
+      agentValidations.some(
+        (hash: string) =>
+          hash.toLowerCase() === unauthorizedPayload.hash.toLowerCase() ||
+          hash.toLowerCase() === zeroValidatorPayload.hash.toLowerCase(),
+      ) ||
+      validatorRequests.some(
+        (hash: string) =>
+          hash.toLowerCase() === unauthorizedPayload.hash.toLowerCase() ||
+          hash.toLowerCase() === zeroValidatorPayload.hash.toLowerCase(),
+      )
     ) {
       throw new Error("Registry indexes did not have the exact expected delta");
     }
@@ -1250,7 +1303,7 @@ async function main() {
       }),
       secondaryValidation.getSummary(
         AGENT_ID,
-        [validatorWallet.address],
+        [validatorAddress],
         "agreement-lifecycle",
         { blockTag: responseReceipt.blockNumber },
       ),
@@ -1261,7 +1314,7 @@ async function main() {
       secondaryRequestReceipt.blockHash !== requestReceipt.blockHash ||
       secondaryResponseReceipt.blockHash !== responseReceipt.blockHash ||
       secondaryStatus.validatorAddress.toLowerCase() !==
-        validatorWallet.address.toLowerCase() ||
+        validatorAddress.toLowerCase() ||
       secondaryStatus.agentId !== AGENT_ID ||
       secondaryStatus.response !== 100n ||
       secondaryStatus.responseHash.toLowerCase() !==
@@ -1278,13 +1331,13 @@ async function main() {
     const responseArgs = responseEvent.args;
     if (
       requestArgs.validatorAddress.toLowerCase() !==
-        validatorWallet.address.toLowerCase() ||
+        validatorAddress.toLowerCase() ||
       requestArgs.agentId !== AGENT_ID ||
       requestArgs.requestURI !== requestPayload.uri ||
       requestArgs.requestHash.toLowerCase() !==
         requestPayload.hash.toLowerCase() ||
       responseArgs.validatorAddress.toLowerCase() !==
-        validatorWallet.address.toLowerCase() ||
+        validatorAddress.toLowerCase() ||
       responseArgs.agentId !== AGENT_ID ||
       responseArgs.requestHash.toLowerCase() !==
         requestPayload.hash.toLowerCase() ||
@@ -1311,12 +1364,20 @@ async function main() {
           uri: responsePayload.uri,
           hash: responsePayload.hash,
         },
+        negativeControls: {
+          unauthorizedRequest: {
+            json: unauthorizedPayload.json,
+            uri: unauthorizedPayload.uri,
+            hash: unauthorizedPayload.hash,
+          },
+          zeroValidatorRequest: {
+            json: zeroValidatorPayload.json,
+            uri: zeroValidatorPayload.uri,
+            hash: zeroValidatorPayload.hash,
+          },
+        },
       },
       transactions: {
-        validatorFunding: {
-          ...(await receiptRecord(provider, fundingReceipt)),
-          walletLayer: funding.walletResult,
-        },
         unauthorizedRequest: {
           ...(await receiptRecord(provider, unauthorizedReceipt)),
           revertBinding: unauthorizedBinding,
@@ -1327,7 +1388,6 @@ async function main() {
         },
         duplicateRequest: {
           ...(await receiptRecord(provider, duplicateReceipt)),
-          walletLayer: duplicateTx.walletResult,
           revertBinding: duplicateBinding,
         },
         wrongValidatorResponse: {
@@ -1341,7 +1401,6 @@ async function main() {
         },
         zeroValidatorRequest: {
           ...(await receiptRecord(provider, zeroValidatorReceipt)),
-          walletLayer: zeroValidatorTx.walletResult,
           revertBinding: zeroValidatorBinding,
         },
         validationResponse: await receiptRecord(provider, responseReceipt),
@@ -1379,6 +1438,8 @@ async function main() {
           },
           owner: requestBlockOwner,
           agentWallet: requestBlockAgentWallet,
+          tokenApproved: requestBlockApproved,
+          validatorApprovedForAll: requestBlockApprovedForAll,
         },
         unchangedAfterMinedControls: {
           blockNumber: zeroValidatorReceipt.blockNumber,
@@ -1390,6 +1451,13 @@ async function main() {
             count: postControlSummary.count.toString(),
             avgResponse: postControlSummary.avgResponse.toString(),
           },
+        },
+        rejectedHashesAbsent: {
+          unauthorizedRequestHash: unauthorizedPayload.hash,
+          unauthorizedStatus: unauthorizedUnknownBinding,
+          zeroValidatorRequestHash: zeroValidatorPayload.hash,
+          zeroValidatorStatus: zeroValidatorUnknownBinding,
+          absentFromAgentAndValidatorIndexes: true,
         },
         finalAtResponseBlock: {
           blockNumber: responseReceipt.blockNumber,
@@ -1435,85 +1503,30 @@ async function main() {
   } catch (error) {
     runError = error;
   } finally {
-    if (policyMutationAttempted) {
-      try {
-        const validatorBalance = await provider.getBalance(
-          validatorWallet.address,
+    try {
+      const finalPolicy = (await getAgentWalletPolicy(agentWallet)).policy;
+      finalPolicyFingerprint = policyFingerprint(finalPolicy);
+      finalPolicySha256 = ethers.sha256(ethers.toUtf8Bytes(finalPolicy));
+      policyUnchanged =
+        finalPolicy === originalPolicy &&
+        finalPolicyFingerprint === originalPolicyFingerprint &&
+        finalPolicySha256 === originalPolicySha256;
+      [validatorBalanceAfter, agentWalletBalanceAfter] = await Promise.all([
+        provider.getBalance(validatorAddress),
+        provider.getBalance(agentWallet),
+      ]);
+      if (!policyUnchanged) {
+        throw new Error(
+          "Agent Wallet policy changed during the proof; no overwrite was attempted",
         );
-        const feeData = await provider.getFeeData();
-        const gasPrice = feeData.gasPrice;
-        if (!gasPrice) {
-          throw new Error("RPC did not return a gas price for validator sweep");
-        }
-        const reserve = gasPrice * 21_000n;
-        if (validatorBalance > reserve) {
-          const sweepTx = await validatorWallet.sendTransaction({
-            to: agentWallet,
-            value: validatorBalance - reserve,
-            gasLimit: 21_000n,
-            gasPrice,
-          });
-          const sweepReceipt = await assertMinedStatus(
-            provider,
-            sweepTx.hash,
-            1,
-          );
-          await assertTransactionBinding(provider, sweepReceipt, {
-            from: validatorWallet.address,
-            to: agentWallet,
-            data: "0x",
-            value: validatorBalance - reserve,
-          });
-          const remainingBalance = await provider.getBalance(
-            validatorWallet.address,
-          );
-          if (remainingBalance > 1_000n) {
-            throw new Error(
-              `Validator sweep left ${remainingBalance} wei, above the 1000 wei dust ceiling`,
-            );
-          }
-          sweepRecord = {
-            attempted: true,
-            succeeded: true,
-            ...(await receiptRecord(provider, sweepReceipt)),
-            remainingBalanceWei: remainingBalance.toString(),
-            dustCeilingWei: "1000",
-          };
-        } else {
-          if (validatorBalance > 1_000n) {
-            throw new Error(
-              `Validator balance ${validatorBalance} wei cannot fund a sweep and exceeds the dust ceiling`,
-            );
-          }
-          sweepRecord = {
-            attempted: false,
-            succeeded: true,
-            reason: "Validator balance was already below the dust ceiling",
-            remainingBalanceWei: validatorBalance.toString(),
-            dustCeilingWei: "1000",
-          };
-        }
-      } catch (error) {
-        sweepRecord = {
-          attempted: true,
-          succeeded: false,
-          error: error instanceof Error ? error.message : String(error),
-        };
-        if (!runError) runError = error;
       }
-
-      if (!policyRestored) {
-        try {
-          await restoreOriginalPolicy();
-        } catch (error) {
-          if (!runError) runError = error;
-        }
-      }
+    } catch (error) {
+      if (!runError) runError = error;
     }
   }
 
-  if (!policyRestored) {
-    throw new Error("Original Agent Wallet policy was not restored", {
+  if (!policyUnchanged) {
+    throw new Error("Agent Wallet policy was not proven unchanged", {
       cause: runError,
     });
   }
@@ -1528,16 +1541,35 @@ async function main() {
     network: "lineaSepolia",
     chainId: CHAIN_ID,
     purpose:
-      "Close the bounded ERC-8004 Validation Registry composition gap with one real Agent Wallet request, one separately signed response from a distinct same-run validator EOA, exact event/state readback, and mined rejection controls.",
+      "Close the bounded ERC-8004 Validation Registry composition gap with one real Agent Wallet request, one separately signed response from a distinct configured testnet validator EOA, exact event/state readback, and mined rejection controls.",
     source: "contracts/scripts/real-metamask-erc8004-validation-live.ts",
     sourceCommit: sourceGit.commit,
     workingTreeDirtyBeforeEvidenceWrite: sourceGit.workingTreeDirty,
+    runtime: {
+      node: process.version,
+      ethers: ethers.version,
+      hardhatNetwork: network.name,
+      agentWalletCli:
+        findStringByKey(
+          agentWalletDoctor,
+          new Set(["cliVersion", "version"]),
+        ) || "not-returned-by-doctor",
+    },
     actors: {
       agentWallet,
       agentId: AGENT_ID.toString(),
-      validator: validatorWallet.address,
+      validator: validatorAddress,
+      validatorExpectedAddress,
+      validatorRole:
+        "Configured Linea Sepolia test signer; distinct from the Agent Wallet and not an approved operator for agent 2.",
+      validatorIsIndependent: false,
       validatorKeyHandling:
-        "Generated in process memory only and never printed or persisted; the validator sweep result is recorded separately.",
+        "Loaded by Hardhat from the existing runner environment; never printed or persisted by this runner.",
+      validatorOwnerOperatorChecks: {
+        owner: identityOwner,
+        tokenApproved: identityApproved,
+        approvedForAll: validatorApprovedForAll,
+      },
     },
     registry: {
       address: VALIDATION_REGISTRY,
@@ -1606,28 +1638,35 @@ async function main() {
       },
     },
     walletPolicy: {
-      temporaryChange:
-        "Added only the official-configured Validation Registry and the one-run validator to the existing allowlist; temporarily ensured a rolling_24h outflow limit of at least USD 5 for validator funding.",
-      originalRestoredExactly: policyRestored,
-      originalPolicyNotPersisted: true,
+      walletAddress: agentWallet,
+      mutationAttempted: false,
+      beforeSha256: originalPolicySha256,
+      afterSha256: finalPolicySha256,
+      unchanged: policyUnchanged,
+      contentPersisted: false,
     },
-    validatorSweep: sweepRecord,
+    balances: {
+      validatorBeforeWei: validatorBalance.toString(),
+      validatorAfterWei: validatorBalanceAfter.toString(),
+      agentWalletBeforeWei: agentWalletBalance.toString(),
+      agentWalletAfterWei: agentWalletBalanceAfter.toString(),
+    },
     ...proof,
-    independentVerification: {
+    runnerAssertions: {
       checks: [
         "The proxy implementation slot, owner, version, linked Identity Registry, and three runtime bytecode hashes were read from Linea Sepolia.",
         "ERC-8004 agent 2 was owned by and registered to the MetaMask Agent Wallet at proof time.",
         "The validation subject was re-checked: the pinned Agent Wallet transaction succeeded through the Delegation Manager, emitted the expected Reputation Registry feedback, and the agreement remains DONE with unrevoked feedback.",
         "The Agent Wallet mined ValidationRequest successfully and its exact indexed and non-indexed event fields match the fixture.",
-        "A distinct ephemeral EOA mined ValidationResponse successfully and its exact event fields match the fixture.",
+        "A distinct configured testnet EOA mined ValidationResponse successfully and its exact event fields match the fixture.",
         "getValidationStatus, getSummary, getAgentValidations, and getValidatorRequests all include the expected final state.",
         "Five negative controls were mined with status 0 and rebound to their exact Error(string) reasons through block-pinned eth_call.",
         `A second public RPC (${secondaryUrl.hostname}) independently returned the same request/response block hashes and final validation state.`,
-        "The Agent Wallet policy was restored byte-for-byte before evidence was emitted.",
+        "The runner made no Agent Wallet policy mutation and proved the policy remained byte-for-byte unchanged before emitting evidence.",
       ],
     },
     proofCeiling:
-      "This evidence proves one pinned Linea Sepolia composition through the Validation Registry address listed in the ERC-8004 repository's testnet address configuration: an Agent Wallet-owned ERC-8004 identity can request validation, a distinct named validator can answer, exact events and state are recoverable, and the tested authorization/range controls reject on-chain. It does not establish maintainer endorsement beyond the cited address configuration, mainnet or production readiness, audit status, challenge/slashing/finality semantics, agreement-outcome enforcement, demand, economics, or token necessity.",
+      "This evidence proves one pinned official-repository-configured Linea Sepolia Validation Registry path: the Agent Wallet-owned agent 2 requested validation; a distinct CNS-controlled configured testnet EOA responded; and the exact tested authorization, duplicate, zero-address, wrong-validator, and response-range controls reverted on-chain. It does not prove third-party validator independence, official maintainer endorsement beyond the address and source pins, economics, challenge/slashing/finality or penalty routing, audit or security status, production or mainnet readiness, demand, or token necessity.",
   };
 
   const outputPath = path.resolve(
