@@ -9,10 +9,9 @@ official ERC-8004 repository for testnets:
 - ERC-8004 source pin: `68fc6765761a10fb26f0692df21c8a6f9d12b1be`
 
 The trace uses ERC-8004 agent `2`, whose owner and registered agent wallet must
-both equal the active MetaMask Agent Wallet. A configured Linea Sepolia test
-signer acts as the distinct named validator. The runner requires its public
-address in `VALIDATION_PROOF_VALIDATOR_ADDRESS`, verifies that it is neither the
-agent owner nor an approved operator, and records:
+both equal the active MetaMask Agent Wallet. The runner generates a one-run
+Linea Sepolia signer as the distinct named validator, verifies that it is
+neither the agent owner nor an approved operator, and records:
 
 1. a mined unauthorized request rejection from the validator;
 2. a successful request from the Agent Wallet;
@@ -25,11 +24,11 @@ agent owner nor an approved operator, and records:
 
 The runner never writes the Agent Wallet policy. It hashes and reads the policy
 before and after the trace, then refuses to emit PASS unless the policy remains
-byte-for-byte unchanged. The configured validator must already have enough
-Linea Sepolia ETH for the mined controls and response; its private key is
-loaded by Hardhat from the existing runner environment and is never printed or
-persisted by this runner. The validator is a distinct signing address, not an
-independent third party.
+byte-for-byte unchanged. It funds the validator only for the mined controls and
+response, then refuses to emit PASS unless the balance is swept back to the
+Agent Wallet down to a 1,000 wei dust ceiling. The validator private key exists
+only in process memory and is never printed or persisted. The validator is a
+distinct signing address, not an independent third party.
 
 Run:
 
@@ -38,9 +37,7 @@ npm --prefix contracts run trace:agent-wallet-validation
 ```
 
 If `mm` is not on `PATH`, or the CLI needs a different Node runtime, set
-`AGENT_WALLET_CLI_BIN` and `AGENT_WALLET_NODE_BIN`. Also set
-`VALIDATION_PROOF_VALIDATOR_ADDRESS` to the public address of the configured
-Linea Sepolia test signer.
+`AGENT_WALLET_CLI_BIN` and `AGENT_WALLET_NODE_BIN`.
 
 The resulting evidence is written to:
 

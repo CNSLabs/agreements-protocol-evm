@@ -3,10 +3,11 @@
 // Live Linea Sepolia proof for MetaMask Agent Wallet composition with the
 // ERC-8004 Validation Registry listed in the official testnet address config.
 //
-// The validator is the configured Linea Sepolia runner signer. It must be
-// distinct from the Agent Wallet and must not be an approved operator for the
-// agent identity. The runner never changes the Agent Wallet policy and refuses
-// to emit PASS unless the policy is still byte-for-byte unchanged at the end.
+// The validator key is generated in process memory and funded only for this
+// trace. It must be distinct from the Agent Wallet and must not be an approved
+// operator for the agent identity. The runner never changes the Agent Wallet
+// policy and refuses to emit PASS unless the policy remains byte-for-byte
+// unchanged and the validator funds are swept back before evidence is written.
 
 import { ethers, network } from "hardhat";
 import { execFile } from "node:child_process";
@@ -531,35 +532,10 @@ async function main() {
 
   const agentWalletDoctor = await requireReadyAgentWallet();
   const agentWallet = await resolveAgentWalletAddress();
-  const [validatorWallet] = await ethers.getSigners();
-  if (!validatorWallet) {
-    throw new Error(
-      "A configured Linea Sepolia signer is required for the distinct validator",
-    );
-  }
-  const validatorAddress = await validatorWallet.getAddress();
-  const configuredValidatorAddress =
-    process.env.VALIDATION_PROOF_VALIDATOR_ADDRESS;
-  if (
-    !configuredValidatorAddress ||
-    !ethers.isAddress(configuredValidatorAddress)
-  ) {
-    throw new Error(
-      "VALIDATION_PROOF_VALIDATOR_ADDRESS must pin the public address of the configured test signer",
-    );
-  }
-  const validatorExpectedAddress = ethers.getAddress(
-    configuredValidatorAddress,
-  );
-  if (
-    validatorAddress.toLowerCase() !== validatorExpectedAddress.toLowerCase()
-  ) {
-    throw new Error(
-      `Configured validator was ${validatorAddress}; expected ${validatorExpectedAddress}`,
-    );
-  }
+  const validatorWallet = ethers.Wallet.createRandom().connect(provider);
+  const validatorAddress = validatorWallet.address;
   if (validatorAddress.toLowerCase() === agentWallet.toLowerCase()) {
-    throw new Error("Configured validator unexpectedly equals Agent Wallet");
+    throw new Error("Ephemeral validator unexpectedly equals Agent Wallet");
   }
   const identity = new ethers.Contract(IDENTITY_REGISTRY, identityAbi, provider);
   const validation = new ethers.Contract(
@@ -691,21 +667,20 @@ async function main() {
       "Configured validator is already authorized for agent 2; unauthorized-request control would be invalid",
     );
   }
-  if (validatorBalance === 0n) {
-    throw new Error("Configured validator has no Linea Sepolia balance for gas");
+  if (validatorBalance !== 0n) {
+    throw new Error(
+      "Fresh validator unexpectedly had a pre-existing Linea Sepolia balance",
+    );
   }
   const proofGasPrice = feeData.maxFeePerGas ?? feeData.gasPrice;
   if (!proofGasPrice) {
     throw new Error("RPC did not return a gas price for proof preflight");
   }
   const validatorGasBudget = proofGasPrice * 500_000n * 5n * 2n;
+  const validatorSweepReserve = proofGasPrice * 21_000n * 2n;
+  const validatorFunding = validatorGasBudget + validatorSweepReserve;
   const agentWalletGasBudget =
-    proofGasPrice * BigInt(EXPLICIT_GAS) * 2n * 2n;
-  if (validatorBalance < validatorGasBudget) {
-    throw new Error(
-      `Configured validator balance ${validatorBalance} is below the conservative proof gas budget ${validatorGasBudget}`,
-    );
-  }
+    proofGasPrice * BigInt(EXPLICIT_GAS) * 3n * 2n + validatorFunding;
   if (agentWalletBalance < agentWalletGasBudget) {
     throw new Error(
       `Agent Wallet balance ${agentWalletBalance} is below the conservative proof gas budget ${agentWalletGasBudget}`,
@@ -842,10 +817,32 @@ async function main() {
   let policyUnchanged = false;
   let validatorBalanceAfter = validatorBalance;
   let agentWalletBalanceAfter = agentWalletBalance;
+  let validatorSweepSucceeded = false;
+  let validatorSweep: JsonObject = {
+    attempted: false,
+    succeeded: false,
+    reason: "Proof did not reach validator cleanup",
+  };
   let proof: JsonObject | undefined;
   let runError: unknown;
 
   try {
+    const funding = await sendAgentWalletTransaction(
+      agentWallet,
+      validatorAddress,
+      "0x",
+      validatorFunding,
+      "Fund the one-run ERC-8004 Validation Registry validator on Linea Sepolia",
+      "0x5208",
+    );
+    const fundingReceipt = await assertMinedStatus(provider, funding.hash, 1);
+    await assertTransactionBinding(provider, fundingReceipt, {
+      from: agentWallet,
+      to: validatorAddress,
+      data: "0x",
+      value: validatorFunding,
+    });
+
     const unauthorizedRequestData = validationInterface.encodeFunctionData(
       "validationRequest",
       [
@@ -1378,6 +1375,10 @@ async function main() {
         },
       },
       transactions: {
+        validatorFunding: {
+          ...(await receiptRecord(provider, fundingReceipt)),
+          walletLayer: funding.walletResult,
+        },
         unauthorizedRequest: {
           ...(await receiptRecord(provider, unauthorizedReceipt)),
           revertBinding: unauthorizedBinding,
@@ -1504,6 +1505,73 @@ async function main() {
     runError = error;
   } finally {
     try {
+      const balanceBeforeSweep = await provider.getBalance(validatorAddress);
+      if (balanceBeforeSweep > 1_000n) {
+        const cleanupFeeData = await provider.getFeeData();
+        const cleanupGasPrice = cleanupFeeData.gasPrice;
+        if (!cleanupGasPrice) {
+          throw new Error(
+            "RPC did not return a gas price for validator cleanup",
+          );
+        }
+        const reserve = cleanupGasPrice * 21_000n;
+        if (balanceBeforeSweep <= reserve + 1_000n) {
+          throw new Error(
+            `Validator balance ${balanceBeforeSweep} cannot fund cleanup to the dust ceiling`,
+          );
+        }
+        const sweepValue = balanceBeforeSweep - reserve;
+        const sweepTx = await validatorWallet.sendTransaction({
+          to: agentWallet,
+          value: sweepValue,
+          gasLimit: 21_000n,
+          gasPrice: cleanupGasPrice,
+        });
+        const sweepReceipt = await assertMinedStatus(
+          provider,
+          sweepTx.hash,
+          1,
+        );
+        await assertTransactionBinding(provider, sweepReceipt, {
+          from: validatorAddress,
+          to: agentWallet,
+          data: "0x",
+          value: sweepValue,
+        });
+        const remainingBalance = await provider.getBalance(validatorAddress);
+        if (remainingBalance > 1_000n) {
+          throw new Error(
+            `Validator cleanup left ${remainingBalance} wei, above the dust ceiling`,
+          );
+        }
+        validatorSweep = {
+          attempted: true,
+          succeeded: true,
+          ...(await receiptRecord(provider, sweepReceipt)),
+          balanceBeforeWei: balanceBeforeSweep.toString(),
+          remainingBalanceWei: remainingBalance.toString(),
+          dustCeilingWei: "1000",
+        };
+      } else {
+        validatorSweep = {
+          attempted: false,
+          succeeded: true,
+          reason: "Validator balance was already below the dust ceiling",
+          remainingBalanceWei: balanceBeforeSweep.toString(),
+          dustCeilingWei: "1000",
+        };
+      }
+      validatorSweepSucceeded = true;
+    } catch (error) {
+      validatorSweep = {
+        attempted: true,
+        succeeded: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+      if (!runError) runError = error;
+    }
+
+    try {
       const finalPolicy = (await getAgentWalletPolicy(agentWallet)).policy;
       finalPolicyFingerprint = policyFingerprint(finalPolicy);
       finalPolicySha256 = ethers.sha256(ethers.toUtf8Bytes(finalPolicy));
@@ -1530,6 +1598,11 @@ async function main() {
       cause: runError,
     });
   }
+  if (!validatorSweepSucceeded) {
+    throw new Error("Validator funds were not cleaned up to the dust ceiling", {
+      cause: runError,
+    });
+  }
   if (runError) throw runError;
   if (!proof) throw new Error("Proof completed without an evidence payload");
 
@@ -1541,7 +1614,7 @@ async function main() {
     network: "lineaSepolia",
     chainId: CHAIN_ID,
     purpose:
-      "Close the bounded ERC-8004 Validation Registry composition gap with one real Agent Wallet request, one separately signed response from a distinct configured testnet validator EOA, exact event/state readback, and mined rejection controls.",
+      "Close the bounded ERC-8004 Validation Registry composition gap with one real Agent Wallet request, one separately signed response from a distinct one-run validator EOA, exact event/state readback, and mined rejection controls.",
     source: "contracts/scripts/real-metamask-erc8004-validation-live.ts",
     sourceCommit: sourceGit.commit,
     workingTreeDirtyBeforeEvidenceWrite: sourceGit.workingTreeDirty,
@@ -1559,12 +1632,11 @@ async function main() {
       agentWallet,
       agentId: AGENT_ID.toString(),
       validator: validatorAddress,
-      validatorExpectedAddress,
       validatorRole:
-        "Configured Linea Sepolia test signer; distinct from the Agent Wallet and not an approved operator for agent 2.",
+        "One-run Linea Sepolia test signer; distinct from the Agent Wallet and not an approved operator for agent 2.",
       validatorIsIndependent: false,
       validatorKeyHandling:
-        "Loaded by Hardhat from the existing runner environment; never printed or persisted by this runner.",
+        "Generated in process memory, never printed or persisted, funded only for this trace, and swept back to the Agent Wallet before evidence was written.",
       validatorOwnerOperatorChecks: {
         owner: identityOwner,
         tokenApproved: identityApproved,
@@ -1647,10 +1719,12 @@ async function main() {
     },
     balances: {
       validatorBeforeWei: validatorBalance.toString(),
+      validatorFundingWei: validatorFunding.toString(),
       validatorAfterWei: validatorBalanceAfter.toString(),
       agentWalletBeforeWei: agentWalletBalance.toString(),
       agentWalletAfterWei: agentWalletBalanceAfter.toString(),
     },
+    validatorSweep,
     ...proof,
     runnerAssertions: {
       checks: [
@@ -1658,7 +1732,7 @@ async function main() {
         "ERC-8004 agent 2 was owned by and registered to the MetaMask Agent Wallet at proof time.",
         "The validation subject was re-checked: the pinned Agent Wallet transaction succeeded through the Delegation Manager, emitted the expected Reputation Registry feedback, and the agreement remains DONE with unrevoked feedback.",
         "The Agent Wallet mined ValidationRequest successfully and its exact indexed and non-indexed event fields match the fixture.",
-        "A distinct configured testnet EOA mined ValidationResponse successfully and its exact event fields match the fixture.",
+        "A distinct one-run testnet EOA mined ValidationResponse successfully and its exact event fields match the fixture.",
         "getValidationStatus, getSummary, getAgentValidations, and getValidatorRequests all include the expected final state.",
         "Five negative controls were mined with status 0 and rebound to their exact Error(string) reasons through block-pinned eth_call.",
         `A second public RPC (${secondaryUrl.hostname}) independently returned the same request/response block hashes and final validation state.`,
@@ -1666,7 +1740,7 @@ async function main() {
       ],
     },
     proofCeiling:
-      "This evidence proves one pinned official-repository-configured Linea Sepolia Validation Registry path: the Agent Wallet-owned agent 2 requested validation; a distinct CNS-controlled configured testnet EOA responded; and the exact tested authorization, duplicate, zero-address, wrong-validator, and response-range controls reverted on-chain. It does not prove third-party validator independence, official maintainer endorsement beyond the address and source pins, economics, challenge/slashing/finality or penalty routing, audit or security status, production or mainnet readiness, demand, or token necessity.",
+      "This evidence proves one pinned official-repository-configured Linea Sepolia Validation Registry path: the Agent Wallet-owned agent 2 requested validation; a distinct one-run CNS-controlled testnet EOA responded; and the exact tested authorization, duplicate, zero-address, wrong-validator, and response-range controls reverted on-chain. It does not prove third-party validator independence, official maintainer endorsement beyond the address and source pins, economics, challenge/slashing/finality or penalty routing, audit or security status, production or mainnet readiness, demand, or token necessity.",
   };
 
   const outputPath = path.resolve(
