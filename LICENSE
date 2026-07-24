@@ -2,7 +2,9 @@ Copyright 2026 CNS Labs Inc.
 
 This repository is split-licensed.
 
-- Core Solidity contract implementations in `contracts/src/**` are licensed under `BUSL-1.1`.
+- Core Solidity contract implementations in `contracts/src/**` are licensed under `BUSL-1.1`, except for the two Apache-2.0 paths listed below.
+- The ERC-8004 periphery in `contracts/src/periphery/erc8004/**` is licensed under `Apache-2.0`.
+- The extracted verifier interface at `contracts/src/interfaces/IInputVerifier.sol` is licensed under `Apache-2.0`.
 - The SDK and client-facing libraries in `sdk/**` are licensed under `Apache-2.0`.
 - Example agreements, tests, scripts, deployment metadata, mapping docs, and repository documentation are licensed under `Apache-2.0`.
 

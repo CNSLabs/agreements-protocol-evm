@@ -1,0 +1,10 @@
+Agreements Protocol ERC-8004 Periphery
+Copyright 2026 CNS Labs Inc.
+
+The minimal ERC-8004 ABI declarations were independently written to
+interoperate with the public signatures in the ERC-8004 Solidity sources at
+commit 68fc6765761a10fb26f0692df21c8a6f9d12b1be:
+https://github.com/erc-8004/erc-8004-contracts
+
+No upstream implementation source is included here. The referenced upstream
+Solidity source files carry the MIT SPDX license identifier.

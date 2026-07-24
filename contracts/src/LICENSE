@@ -1,10 +1,21 @@
+LICENSE BOUNDARY
+
+This Business Source License applies to the core contract implementations in
+this directory, except for these files:
+
+- `interfaces/IInputVerifier.sol`
+- `periphery/erc8004/**`
+
+Those exceptions are licensed under the Apache License 2.0. The periphery
+directory contains its own `LICENSE`, `NOTICE`, and `README.md`.
+
 Business Source License 1.1
 
 Parameters
 
 Licensor: CNS Labs Inc.
 
-Licensed Work: Agreements Protocol EVM core contract implementations in contracts/src/**
+Licensed Work: Agreements Protocol EVM core contract implementations in contracts/src/**, excluding contracts/src/interfaces/IInputVerifier.sol and contracts/src/periphery/erc8004/**
 
 Additional Use Grant: None
 

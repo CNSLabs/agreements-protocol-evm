@@ -3,7 +3,16 @@ Copyright 2026 CNS Labs Inc.
 
 This repository is split-licensed.
 
-- Core Solidity contract implementations in `contracts/src/**` are licensed under BUSL-1.1.
+- Core Solidity contract implementations in `contracts/src/**` are licensed under BUSL-1.1, except for `contracts/src/interfaces/IInputVerifier.sol` and `contracts/src/periphery/erc8004/**`.
+- The ERC-8004 periphery and extracted verifier interface are licensed under Apache-2.0.
 - The SDK, client-facing libraries, examples, tests, scripts, deployment metadata, and documentation are licensed under Apache-2.0.
 
 See `LICENSE` and `LICENSING.md` for the repository-wide licensing map.
+
+The minimal ERC-8004 ABI declarations were independently written to
+interoperate with the public signatures in the ERC-8004 Solidity sources at
+commit 68fc6765761a10fb26f0692df21c8a6f9d12b1be:
+https://github.com/erc-8004/erc-8004-contracts
+
+No upstream implementation source is included here. The referenced upstream
+Solidity source files carry the MIT SPDX license identifier.
