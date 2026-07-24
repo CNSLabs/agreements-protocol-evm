@@ -26,9 +26,12 @@ The runner never writes the Agent Wallet policy. It hashes and reads the policy
 before and after the trace, then refuses to emit PASS unless the policy remains
 byte-for-byte unchanged. It funds the validator only for the mined controls and
 response, then refuses to emit PASS unless the balance is swept back to the
-Agent Wallet down to a 1,000 wei dust ceiling. The validator private key exists
-only in process memory and is never printed or persisted. The validator is a
-distinct signing address, not an independent third party.
+Agent Wallet down to a 1,000 wei dust ceiling. Validator transactions use
+explicit sequential nonces and bounded fee retries. Before the sweep, the
+runner replaces any unresolved validator nonce with a zero-value self-transfer
+and verifies that latest and pending nonce counts match. The validator private
+key exists only in process memory and is never printed or persisted. The
+validator is a distinct signing address, not an independent third party.
 
 Run:
 

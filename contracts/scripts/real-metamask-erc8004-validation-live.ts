@@ -14,7 +14,12 @@ import { execFile } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
-import type { JsonRpcProvider, TransactionReceipt } from "ethers";
+import type {
+  JsonRpcProvider,
+  Signer,
+  TransactionReceipt,
+  TransactionRequest,
+} from "ethers";
 
 const CHAIN_ID = 59141;
 const RPC_URL =
@@ -50,6 +55,11 @@ const EIP1967_IMPLEMENTATION_SLOT =
 const ERROR_STRING_SELECTOR = "0x08c379a0";
 const EXPLICIT_GAS = "0x7a120";
 const DONE_STATE = ethers.keccak256(ethers.toUtf8Bytes("DONE"));
+const VALIDATOR_GAS_LIMIT = 500_000n;
+const VALIDATOR_TRANSACTION_ATTEMPTS = 3;
+const VALIDATOR_RECEIPT_ATTEMPT_TIMEOUT_MS = 45_000;
+const VALIDATOR_GAS_PRICE_FLOOR = 100_000_000n;
+const VALIDATOR_CLEANUP_GAS_PRICE_FLOOR = 1_000_000_000n;
 const execFileAsync = promisify(execFile);
 
 const validationAbi = [
@@ -101,6 +111,21 @@ type AgentWalletTransaction = {
 type AgentWalletPolicy = {
   policy: string;
   address: string;
+};
+
+type ValidatorAttemptKind = "proof" | "cleanup" | "sweep";
+
+type ValidatorAttemptRecord = {
+  label: string;
+  kind: ValidatorAttemptKind;
+  nonce: number;
+  attempts: Array<{
+    hash: string;
+    gasPriceWei: string;
+  }>;
+  minedHash?: string;
+  minedStatus?: number;
+  replacedByCleanupHash?: string;
 };
 
 function isJsonObject(value: unknown): value is JsonObject {
@@ -330,14 +355,287 @@ async function sendAgentWalletTransaction(
 async function waitForReceipt(
   provider: JsonRpcProvider,
   hash: string,
+  timeoutMs = 6 * 60 * 1000,
 ): Promise<TransactionReceipt> {
-  const deadline = Date.now() + 6 * 60 * 1000;
+  const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const receipt = await provider.getTransactionReceipt(hash);
     if (receipt) return receipt;
     await new Promise((resolve) => setTimeout(resolve, 2_000));
   }
   throw new Error(`Timed out waiting for receipt ${hash}`);
+}
+
+function maxBigInt(...values: bigint[]): bigint {
+  return values.reduce(
+    (maximum, value) => (value > maximum ? value : maximum),
+    0n,
+  );
+}
+
+function minBigInt(...values: bigint[]): bigint {
+  return values.reduce(
+    (minimum, value) => (value < minimum ? value : minimum),
+  );
+}
+
+async function firstKnownReceipt(
+  provider: JsonRpcProvider,
+  hashes: string[],
+): Promise<TransactionReceipt | undefined> {
+  for (const hash of hashes) {
+    const receipt = await provider.getTransactionReceipt(hash);
+    if (receipt) return receipt;
+  }
+  return undefined;
+}
+
+function requireReceiptStatus(
+  receipt: TransactionReceipt,
+  expectedStatus: number,
+): TransactionReceipt {
+  if (receipt.status !== expectedStatus) {
+    throw new Error(
+      `Transaction ${receipt.hash} status was ${receipt.status}; expected ${expectedStatus}`,
+    );
+  }
+  return receipt;
+}
+
+async function sendManagedValidatorTransaction(
+  provider: JsonRpcProvider,
+  signer: Signer,
+  transactionForGasPrice: (gasPrice: bigint) => TransactionRequest,
+  expectedStatus: number,
+  initialGasPrice: bigint,
+  maximumGasPrice: bigint,
+  nonce: number,
+  label: string,
+  kind: ValidatorAttemptKind,
+  records: ValidatorAttemptRecord[],
+): Promise<TransactionReceipt> {
+  if (initialGasPrice > maximumGasPrice) {
+    throw new Error(
+      `Initial validator gas price ${initialGasPrice} exceeds funded maximum ${maximumGasPrice}`,
+    );
+  }
+  const signerAddress = await signer.getAddress();
+  const record: ValidatorAttemptRecord = {
+    label,
+    kind,
+    nonce,
+    attempts: [],
+  };
+  records.push(record);
+
+  let gasPrice = initialGasPrice;
+  let lastError: unknown;
+  for (
+    let attempt = 0;
+    attempt < VALIDATOR_TRANSACTION_ATTEMPTS;
+    attempt += 1
+  ) {
+    const knownBeforeSend = await firstKnownReceipt(
+      provider,
+      record.attempts.map(({ hash }) => hash),
+    );
+    if (knownBeforeSend) {
+      record.minedHash = knownBeforeSend.hash;
+      record.minedStatus = knownBeforeSend.status ?? undefined;
+      return requireReceiptStatus(knownBeforeSend, expectedStatus);
+    }
+
+    try {
+      const transaction = await signer.sendTransaction({
+        ...transactionForGasPrice(gasPrice),
+        nonce,
+        gasPrice,
+        type: 0,
+      });
+      record.attempts.push({
+        hash: transaction.hash,
+        gasPriceWei: gasPrice.toString(),
+      });
+      const receipt = await waitForReceipt(
+        provider,
+        transaction.hash,
+        VALIDATOR_RECEIPT_ATTEMPT_TIMEOUT_MS,
+      );
+      record.minedHash = receipt.hash;
+      record.minedStatus = receipt.status ?? undefined;
+      return requireReceiptStatus(receipt, expectedStatus);
+    } catch (error) {
+      lastError = error;
+      const knownAfterError = await firstKnownReceipt(
+        provider,
+        record.attempts.map(({ hash }) => hash),
+      );
+      if (knownAfterError) {
+        record.minedHash = knownAfterError.hash;
+        record.minedStatus = knownAfterError.status ?? undefined;
+        return requireReceiptStatus(knownAfterError, expectedStatus);
+      }
+      const latestNonce = await provider.getTransactionCount(
+        signerAddress,
+        "latest",
+      );
+      if (latestNonce > nonce) {
+        throw new Error(
+          `Validator nonce ${nonce} advanced without a receipt for a tracked transaction`,
+          { cause: error },
+        );
+      }
+    }
+
+    const freshFeeData = await provider.getFeeData();
+    gasPrice = minBigInt(
+      maximumGasPrice,
+      maxBigInt(
+        gasPrice * 2n,
+        freshFeeData.gasPrice ?? 0n,
+        VALIDATOR_GAS_PRICE_FLOOR,
+      ),
+    );
+  }
+
+  throw new Error(
+    `Validator transaction "${label}" did not mine after ${VALIDATOR_TRANSACTION_ATTEMPTS} fee attempts`,
+    { cause: lastError },
+  );
+}
+
+async function clearPendingValidatorNonces(
+  provider: JsonRpcProvider,
+  signer: Signer,
+  initialGasPrice: bigint,
+  maximumGasPrice: bigint,
+  records: ValidatorAttemptRecord[],
+): Promise<string[]> {
+  const signerAddress = await signer.getAddress();
+  const cancellationReceipts: string[] = [];
+
+  const unresolvedProofRecords = records.filter(
+    (record) =>
+      record.kind === "proof" &&
+      record.attempts.length > 0 &&
+      record.minedHash === undefined,
+  );
+  for (const unresolved of unresolvedProofRecords) {
+    const knownReceipt = await firstKnownReceipt(
+      provider,
+      unresolved.attempts.map(({ hash }) => hash),
+    );
+    if (knownReceipt) {
+      unresolved.minedHash = knownReceipt.hash;
+      unresolved.minedStatus = knownReceipt.status ?? undefined;
+      continue;
+    }
+
+    const latestNonce = await provider.getTransactionCount(
+      signerAddress,
+      "latest",
+    );
+    if (latestNonce > unresolved.nonce) continue;
+    if (latestNonce < unresolved.nonce) {
+      throw new Error(
+        `Cannot clean validator nonce ${unresolved.nonce} while latest nonce is ${latestNonce}`,
+      );
+    }
+
+    const lastAttempt = unresolved.attempts.at(-1);
+    if (!lastAttempt) {
+      throw new Error(
+        `Unresolved validator nonce ${unresolved.nonce} had no tracked attempt`,
+      );
+    }
+    const cancellationGasPrice = maxBigInt(
+      initialGasPrice,
+      BigInt(lastAttempt.gasPriceWei) * 2n,
+    );
+    if (cancellationGasPrice > maximumGasPrice) {
+      throw new Error(
+        `Cancellation price ${cancellationGasPrice} exceeds funded maximum ${maximumGasPrice}`,
+      );
+    }
+
+    try {
+      const receipt = await sendManagedValidatorTransaction(
+        provider,
+        signer,
+        () => ({
+          to: signerAddress,
+          data: "0x",
+          value: 0n,
+          gasLimit: 21_000n,
+        }),
+        1,
+        cancellationGasPrice,
+        maximumGasPrice,
+        unresolved.nonce,
+        `Cancel unresolved validator nonce ${unresolved.nonce}`,
+        "cleanup",
+        records,
+      );
+      unresolved.replacedByCleanupHash = receipt.hash;
+      cancellationReceipts.push(receipt.hash);
+    } catch (error) {
+      const receiptAfterError = await firstKnownReceipt(
+        provider,
+        unresolved.attempts.map(({ hash }) => hash),
+      );
+      if (receiptAfterError) {
+        unresolved.minedHash = receiptAfterError.hash;
+        unresolved.minedStatus = receiptAfterError.status ?? undefined;
+        continue;
+      }
+      const latestAfterError = await provider.getTransactionCount(
+        signerAddress,
+        "latest",
+      );
+      if (latestAfterError <= unresolved.nonce) throw error;
+    }
+  }
+
+  for (let cancellation = 0; cancellation < 8; cancellation += 1) {
+    const [latestNonce, pendingNonce] = await Promise.all([
+      provider.getTransactionCount(signerAddress, "latest"),
+      provider.getTransactionCount(signerAddress, "pending"),
+    ]);
+    if (latestNonce === pendingNonce) return cancellationReceipts;
+    if (pendingNonce < latestNonce || pendingNonce - latestNonce > 1) {
+      throw new Error(
+        `Validator nonce state is not sequential: latest=${latestNonce}, pending=${pendingNonce}`,
+      );
+    }
+
+    try {
+      const receipt = await sendManagedValidatorTransaction(
+        provider,
+        signer,
+        () => ({
+          to: signerAddress,
+          data: "0x",
+          value: 0n,
+          gasLimit: 21_000n,
+        }),
+        1,
+        initialGasPrice,
+        maximumGasPrice,
+        latestNonce,
+        "Cancel unresolved validator transaction before cleanup",
+        "cleanup",
+        records,
+      );
+      cancellationReceipts.push(receipt.hash);
+    } catch (error) {
+      const latestAfterError = await provider.getTransactionCount(
+        signerAddress,
+        "latest",
+      );
+      if (latestAfterError <= latestNonce) throw error;
+    }
+  }
+  throw new Error("Validator cleanup exceeded the pending-nonce safety bound");
 }
 
 async function receiptRecord(
@@ -672,15 +970,40 @@ async function main() {
       "Fresh validator unexpectedly had a pre-existing Linea Sepolia balance",
     );
   }
-  const proofGasPrice = feeData.maxFeePerGas ?? feeData.gasPrice;
-  if (!proofGasPrice) {
+  const [validatorLatestNonce, validatorPendingNonce] = await Promise.all([
+    provider.getTransactionCount(validatorAddress, "latest"),
+    provider.getTransactionCount(validatorAddress, "pending"),
+  ]);
+  if (validatorLatestNonce !== 0 || validatorPendingNonce !== 0) {
+    throw new Error(
+      `Fresh validator unexpectedly had nonce state latest=${validatorLatestNonce}, pending=${validatorPendingNonce}`,
+    );
+  }
+  const quotedGasPrice = feeData.gasPrice ?? feeData.maxFeePerGas;
+  if (!quotedGasPrice) {
     throw new Error("RPC did not return a gas price for proof preflight");
   }
-  const validatorGasBudget = proofGasPrice * 500_000n * 5n * 2n;
-  const validatorSweepReserve = proofGasPrice * 21_000n * 2n;
-  const validatorFunding = validatorGasBudget + validatorSweepReserve;
+  const validatorInitialGasPrice = maxBigInt(
+    quotedGasPrice,
+    VALIDATOR_GAS_PRICE_FLOOR,
+  );
+  const validatorMaximumProofGasPrice =
+    validatorInitialGasPrice *
+    2n ** BigInt(VALIDATOR_TRANSACTION_ATTEMPTS - 1);
+  const validatorCleanupInitialGasPrice = maxBigInt(
+    VALIDATOR_CLEANUP_GAS_PRICE_FLOOR,
+    validatorMaximumProofGasPrice * 2n,
+  );
+  const validatorMaximumCleanupGasPrice =
+    validatorCleanupInitialGasPrice *
+    2n ** BigInt(VALIDATOR_TRANSACTION_ATTEMPTS - 1);
+  const validatorGasBudget =
+    validatorMaximumProofGasPrice * VALIDATOR_GAS_LIMIT * 5n;
+  const validatorCleanupReserve =
+    validatorMaximumCleanupGasPrice * 21_000n * 2n;
+  const validatorFunding = validatorGasBudget + validatorCleanupReserve;
   const agentWalletGasBudget =
-    proofGasPrice * BigInt(EXPLICIT_GAS) * 3n * 2n + validatorFunding;
+    quotedGasPrice * BigInt(EXPLICIT_GAS) * 3n * 2n + validatorFunding;
   if (agentWalletBalance < agentWalletGasBudget) {
     throw new Error(
       `Agent Wallet balance ${agentWalletBalance} is below the conservative proof gas budget ${agentWalletGasBudget}`,
@@ -823,6 +1146,9 @@ async function main() {
     succeeded: false,
     reason: "Proof did not reach validator cleanup",
   };
+  const validatorAttemptRecords: ValidatorAttemptRecord[] = [];
+  let nextValidatorNonce = validatorLatestNonce;
+  let pendingNoncesCleared = false;
   let proof: JsonObject | undefined;
   let runError: unknown;
 
@@ -852,16 +1178,23 @@ async function main() {
         unauthorizedPayload.hash,
       ],
     );
-    const unauthorizedTx = await validatorWallet.sendTransaction({
-      to: VALIDATION_REGISTRY,
-      data: unauthorizedRequestData,
-      gasLimit: 500_000n,
-    });
-    const unauthorizedReceipt = await assertMinedStatus(
+    const unauthorizedReceipt = await sendManagedValidatorTransaction(
       provider,
-      unauthorizedTx.hash,
+      validatorWallet,
+      () => ({
+        to: VALIDATION_REGISTRY,
+        data: unauthorizedRequestData,
+        gasLimit: VALIDATOR_GAS_LIMIT,
+      }),
       0,
+      validatorInitialGasPrice,
+      validatorMaximumProofGasPrice,
+      nextValidatorNonce,
+      "Unauthorized validation request control",
+      "proof",
+      validatorAttemptRecords,
     );
+    nextValidatorNonce += 1;
     await assertTransactionBinding(provider, unauthorizedReceipt, {
       from: validatorAddress,
       to: VALIDATION_REGISTRY,
@@ -1003,16 +1336,23 @@ async function main() {
       );
     }
 
-    const duplicateTx = await validatorWallet.sendTransaction({
-      to: VALIDATION_REGISTRY,
-      data: requestData,
-      gasLimit: 500_000n,
-    });
-    const duplicateReceipt = await assertMinedStatus(
+    const duplicateReceipt = await sendManagedValidatorTransaction(
       provider,
-      duplicateTx.hash,
+      validatorWallet,
+      () => ({
+        to: VALIDATION_REGISTRY,
+        data: requestData,
+        gasLimit: VALIDATOR_GAS_LIMIT,
+      }),
       0,
+      validatorInitialGasPrice,
+      validatorMaximumProofGasPrice,
+      nextValidatorNonce,
+      "Duplicate validation request control",
+      "proof",
+      validatorAttemptRecords,
     );
+    nextValidatorNonce += 1;
     await assertTransactionBinding(provider, duplicateReceipt, {
       from: validatorAddress,
       to: VALIDATION_REGISTRY,
@@ -1059,16 +1399,23 @@ async function main() {
         "agreement-lifecycle",
       ],
     );
-    const overRangeTx = await validatorWallet.sendTransaction({
-      to: VALIDATION_REGISTRY,
-      data: overRangeResponseData,
-      gasLimit: 500_000n,
-    });
-    const overRangeReceipt = await assertMinedStatus(
+    const overRangeReceipt = await sendManagedValidatorTransaction(
       provider,
-      overRangeTx.hash,
+      validatorWallet,
+      () => ({
+        to: VALIDATION_REGISTRY,
+        data: overRangeResponseData,
+        gasLimit: VALIDATOR_GAS_LIMIT,
+      }),
       0,
+      validatorInitialGasPrice,
+      validatorMaximumProofGasPrice,
+      nextValidatorNonce,
+      "Response above 100 control",
+      "proof",
+      validatorAttemptRecords,
     );
+    nextValidatorNonce += 1;
     await assertTransactionBinding(provider, overRangeReceipt, {
       from: validatorAddress,
       to: VALIDATION_REGISTRY,
@@ -1085,16 +1432,23 @@ async function main() {
         zeroValidatorPayload.hash,
       ],
     );
-    const zeroValidatorTx = await validatorWallet.sendTransaction({
-      to: VALIDATION_REGISTRY,
-      data: zeroValidatorRequestData,
-      gasLimit: 500_000n,
-    });
-    const zeroValidatorReceipt = await assertMinedStatus(
+    const zeroValidatorReceipt = await sendManagedValidatorTransaction(
       provider,
-      zeroValidatorTx.hash,
+      validatorWallet,
+      () => ({
+        to: VALIDATION_REGISTRY,
+        data: zeroValidatorRequestData,
+        gasLimit: VALIDATOR_GAS_LIMIT,
+      }),
       0,
+      validatorInitialGasPrice,
+      validatorMaximumProofGasPrice,
+      nextValidatorNonce,
+      "Zero-validator request control",
+      "proof",
+      validatorAttemptRecords,
     );
+    nextValidatorNonce += 1;
     await assertTransactionBinding(provider, zeroValidatorReceipt, {
       from: validatorAddress,
       to: VALIDATION_REGISTRY,
@@ -1156,16 +1510,23 @@ async function main() {
       throw new Error("A mined rejection control changed Validation Registry state");
     }
 
-    const responseTx = await validatorWallet.sendTransaction({
-      to: VALIDATION_REGISTRY,
-      data: responseData,
-      gasLimit: 500_000n,
-    });
-    const responseReceipt = await assertMinedStatus(
+    const responseReceipt = await sendManagedValidatorTransaction(
       provider,
-      responseTx.hash,
+      validatorWallet,
+      () => ({
+        to: VALIDATION_REGISTRY,
+        data: responseData,
+        gasLimit: VALIDATOR_GAS_LIMIT,
+      }),
       1,
+      validatorInitialGasPrice,
+      validatorMaximumProofGasPrice,
+      nextValidatorNonce,
+      "Valid validation response",
+      "proof",
+      validatorAttemptRecords,
     );
+    nextValidatorNonce += 1;
     await assertTransactionBinding(provider, responseReceipt, {
       from: validatorAddress,
       to: VALIDATION_REGISTRY,
@@ -1505,43 +1866,85 @@ async function main() {
     runError = error;
   } finally {
     try {
+      const cancellationReceipts = await clearPendingValidatorNonces(
+        provider,
+        validatorWallet,
+        validatorCleanupInitialGasPrice,
+        validatorMaximumCleanupGasPrice,
+        validatorAttemptRecords,
+      );
+      const [latestNonceAfterClear, pendingNonceAfterClear] = await Promise.all([
+        provider.getTransactionCount(validatorAddress, "latest"),
+        provider.getTransactionCount(validatorAddress, "pending"),
+      ]);
+      if (latestNonceAfterClear !== pendingNonceAfterClear) {
+        throw new Error(
+          `Validator still had pending nonces after cleanup: latest=${latestNonceAfterClear}, pending=${pendingNonceAfterClear}`,
+        );
+      }
+      pendingNoncesCleared = true;
+
       const balanceBeforeSweep = await provider.getBalance(validatorAddress);
       if (balanceBeforeSweep > 1_000n) {
-        const cleanupFeeData = await provider.getFeeData();
-        const cleanupGasPrice = cleanupFeeData.gasPrice;
-        if (!cleanupGasPrice) {
-          throw new Error(
-            "RPC did not return a gas price for validator cleanup",
-          );
-        }
-        const reserve = cleanupGasPrice * 21_000n;
-        if (balanceBeforeSweep <= reserve + 1_000n) {
+        const firstSweepReserve =
+          validatorCleanupInitialGasPrice * 21_000n;
+        if (balanceBeforeSweep <= firstSweepReserve + 1_000n) {
           throw new Error(
             `Validator balance ${balanceBeforeSweep} cannot fund cleanup to the dust ceiling`,
           );
         }
-        const sweepValue = balanceBeforeSweep - reserve;
-        const sweepTx = await validatorWallet.sendTransaction({
-          to: agentWallet,
-          value: sweepValue,
-          gasLimit: 21_000n,
-          gasPrice: cleanupGasPrice,
-        });
-        const sweepReceipt = await assertMinedStatus(
+        const sweepReceipt = await sendManagedValidatorTransaction(
           provider,
-          sweepTx.hash,
+          validatorWallet,
+          (gasPrice) => {
+            const reserve = gasPrice * 21_000n;
+            if (balanceBeforeSweep <= reserve + 1_000n) {
+              throw new Error(
+                `Validator balance ${balanceBeforeSweep} cannot fund sweep at gas price ${gasPrice}`,
+              );
+            }
+            return {
+              to: agentWallet,
+              value: balanceBeforeSweep - reserve,
+              data: "0x",
+              gasLimit: 21_000n,
+            };
+          },
           1,
+          validatorCleanupInitialGasPrice,
+          validatorMaximumCleanupGasPrice,
+          latestNonceAfterClear,
+          "Sweep one-run validator balance back to Agent Wallet",
+          "sweep",
+          validatorAttemptRecords,
         );
+        const sweepTransaction = await provider.getTransaction(
+          sweepReceipt.hash,
+        );
+        if (!sweepTransaction) {
+          throw new Error(`Missing validator sweep transaction ${sweepReceipt.hash}`);
+        }
         await assertTransactionBinding(provider, sweepReceipt, {
           from: validatorAddress,
           to: agentWallet,
           data: "0x",
-          value: sweepValue,
+          value: sweepTransaction.value,
         });
-        const remainingBalance = await provider.getBalance(validatorAddress);
-        if (remainingBalance > 1_000n) {
+        const [
+          remainingBalance,
+          latestNonceAfterSweep,
+          pendingNonceAfterSweep,
+        ] = await Promise.all([
+          provider.getBalance(validatorAddress),
+          provider.getTransactionCount(validatorAddress, "latest"),
+          provider.getTransactionCount(validatorAddress, "pending"),
+        ]);
+        if (
+          remainingBalance > 1_000n ||
+          latestNonceAfterSweep !== pendingNonceAfterSweep
+        ) {
           throw new Error(
-            `Validator cleanup left ${remainingBalance} wei, above the dust ceiling`,
+            `Validator cleanup ended with balance=${remainingBalance}, latest=${latestNonceAfterSweep}, pending=${pendingNonceAfterSweep}`,
           );
         }
         validatorSweep = {
@@ -1551,6 +1954,8 @@ async function main() {
           balanceBeforeWei: balanceBeforeSweep.toString(),
           remainingBalanceWei: remainingBalance.toString(),
           dustCeilingWei: "1000",
+          cancellationReceipts,
+          pendingNonceCleared: true,
         };
       } else {
         validatorSweep = {
@@ -1559,6 +1964,8 @@ async function main() {
           reason: "Validator balance was already below the dust ceiling",
           remainingBalanceWei: balanceBeforeSweep.toString(),
           dustCeilingWei: "1000",
+          cancellationReceipts,
+          pendingNonceCleared: true,
         };
       }
       validatorSweepSucceeded = true;
@@ -1600,6 +2007,11 @@ async function main() {
   }
   if (!validatorSweepSucceeded) {
     throw new Error("Validator funds were not cleaned up to the dust ceiling", {
+      cause: runError,
+    });
+  }
+  if (!pendingNoncesCleared) {
+    throw new Error("Validator pending nonces were not cleared", {
       cause: runError,
     });
   }
@@ -1723,6 +2135,17 @@ async function main() {
       validatorAfterWei: validatorBalanceAfter.toString(),
       agentWalletBeforeWei: agentWalletBalance.toString(),
       agentWalletAfterWei: agentWalletBalanceAfter.toString(),
+    },
+    validatorTransactionManagement: {
+      quotedGasPriceWei: quotedGasPrice.toString(),
+      initialProofGasPriceWei: validatorInitialGasPrice.toString(),
+      maximumProofGasPriceWei: validatorMaximumProofGasPrice.toString(),
+      initialCleanupGasPriceWei: validatorCleanupInitialGasPrice.toString(),
+      maximumCleanupGasPriceWei:
+        validatorMaximumCleanupGasPrice.toString(),
+      attemptsPerNonce: VALIDATOR_TRANSACTION_ATTEMPTS,
+      pendingNoncesCleared,
+      records: validatorAttemptRecords,
     },
     validatorSweep,
     ...proof,
