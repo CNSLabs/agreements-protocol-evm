@@ -51,6 +51,9 @@ const START = k("START");
 const DONE = k("DONE");
 const ADVANCE = k("advance");
 const AUTHORIZED_SENDER = k("authorizedSender");
+const DISABLED_DELEGATION_EVENT_TOPIC =
+  "0xea589ba9473ee1fe77d352c7ed919747715a5d22931b972de9b02a907c66d5dd";
+const CANNOT_USE_DISABLED_DELEGATION_SELECTOR = "0x05baa052";
 const execFileAsync = promisify(execFile);
 
 type JsonObject = Record<string, unknown>;
@@ -76,6 +79,33 @@ function findStringByKey(value: unknown, keys: Set<string>): string | undefined 
     if (match) return match;
   }
   return undefined;
+}
+
+function extractRevertData(error: unknown): Hex | undefined {
+  const visited = new Set<unknown>();
+  let current = error;
+  while (isJsonObject(current) && !visited.has(current)) {
+    visited.add(current);
+    const data = current.data;
+    if (typeof data === "string" && /^0x[0-9a-fA-F]+$/.test(data)) {
+      return data as Hex;
+    }
+    if (isJsonObject(data)) {
+      const nestedData = data.data;
+      if (
+        typeof nestedData === "string" &&
+        /^0x[0-9a-fA-F]+$/.test(nestedData)
+      ) {
+        return nestedData as Hex;
+      }
+    }
+    current = current.cause;
+  }
+  return undefined;
+}
+
+function addressTopic(address: Address): Hex {
+  return ethers.zeroPadValue(address, 32).toLowerCase() as Hex;
 }
 
 async function runAgentWalletCommand(args: string[]): Promise<unknown> {
@@ -494,7 +524,7 @@ async function main() {
   }
 
   let smartAccountFundingHash: Hex | undefined;
-  let revocationEvidence: JsonObject = {
+  let delegationDisableEvidence: JsonObject = {
     status: "SKIPPED",
     reason: "Set BUNDLER_RPC_URL to submit a real disableDelegation user operation",
   };
@@ -520,6 +550,26 @@ async function main() {
       client: publicClient,
       transport: http(bundlerRpcUrl),
     });
+    const supportedEntryPoints = await bundlerClient.getSupportedEntryPoints();
+    const entryPoint = environment.EntryPoint as Address;
+    if (
+      !supportedEntryPoints.some(
+        (address) => address.toLowerCase() === entryPoint.toLowerCase(),
+      )
+    ) {
+      throw new Error(`Bundler does not support required EntryPoint ${entryPoint}`);
+    }
+
+    const delegationHash = hashDelegation(signedDelegation);
+    const disabledBefore = await DelegationManager.read.disabledDelegations({
+      client: publicClient,
+      contractAddress: environment.DelegationManager as Address,
+      delegationHash,
+    });
+    if (disabledBefore) {
+      throw new Error("Fresh delegation was already disabled before the user operation");
+    }
+
     const userOperationHash = await bundlerClient.sendUserOperation({
       calls: [
         {
@@ -537,7 +587,6 @@ async function main() {
       throw new Error("Delegation disable user operation reverted");
     }
 
-    const delegationHash = hashDelegation(signedDelegation);
     const disabled = await DelegationManager.read.disabledDelegations({
       client: publicClient,
       contractAddress: environment.DelegationManager as Address,
@@ -545,26 +594,70 @@ async function main() {
     });
     if (!disabled) throw new Error("Delegation Manager did not persist the disabled delegation");
 
-    let postRevocationRedemptionRejected = false;
+    const disableTransactionReceipt = userOperationReceipt.receipt;
+    const disabledDelegationEventObserved = disableTransactionReceipt.logs.some(
+      (log) =>
+        log.address.toLowerCase() === environment.DelegationManager.toLowerCase() &&
+        log.topics[0]?.toLowerCase() === DISABLED_DELEGATION_EVENT_TOPIC &&
+        log.topics[1]?.toLowerCase() === delegationHash.toLowerCase() &&
+        log.topics[2]?.toLowerCase() === addressTopic(smartAccount.address) &&
+        log.topics[3]?.toLowerCase() === addressTopic(delegateAddress),
+    );
+    if (!disabledDelegationEventObserved) {
+      throw new Error("Disable transaction did not emit the exact DisabledDelegation event");
+    }
+
+    let postDisableRevertData: Hex | undefined;
     try {
       await publicClient.call({
         account: delegateAddress,
         to: environment.DelegationManager as Address,
         data: redemption,
       });
-    } catch {
-      postRevocationRedemptionRejected = true;
+    } catch (error) {
+      postDisableRevertData = extractRevertData(error);
     }
-    if (!postRevocationRedemptionRejected) {
-      throw new Error("The disabled delegation remained redeemable");
+    const postDisableRevertSelector =
+      postDisableRevertData?.slice(0, 10).toLowerCase();
+    if (postDisableRevertSelector !== CANNOT_USE_DISABLED_DELEGATION_SELECTOR) {
+      throw new Error(
+        `Disabled redemption did not revert with CannotUseADisabledDelegation(); selector was ${
+          postDisableRevertSelector || "unavailable"
+        }`,
+      );
     }
-    revocationEvidence = {
+    if ((await agreement.currentState()) !== DONE) {
+      throw new Error("Agreement state changed during the disabled redemption check");
+    }
+    const feedbackIndexAfterDisabledReuse = await reputation.getLastIndex(
+      agentId,
+      agreementAddress,
+    );
+    if (feedbackIndexAfterDisabledReuse !== 1n) {
+      throw new Error("Disabled redemption check created unexpected ERC-8004 feedback");
+    }
+
+    delegationDisableEvidence = {
       status: "PASS",
+      entryPoint,
+      supportedEntryPoints,
       delegationHash,
+      redemptionCalldataHash: ethers.keccak256(redemption),
+      disabledBefore,
       disabled,
-      postRevocationRedemptionRejected,
+      disabledDelegationEventObserved,
+      postDisableRedemptionRejected: true,
+      postDisableError: "CannotUseADisabledDelegation()",
+      postDisableErrorSelector: CANNOT_USE_DISABLED_DELEGATION_SELECTOR,
+      agreementStateAfterDisabledReuse: DONE,
+      feedbackIndexAfterDisabledReuse: feedbackIndexAfterDisabledReuse.toString(),
       userOperationHash,
-      transaction: `${explorer}${userOperationReceipt.receipt.transactionHash}`,
+      userOperationSender: userOperationReceipt.sender,
+      userOperationActualGasCost: userOperationReceipt.actualGasCost.toString(),
+      userOperationActualGasUsed: userOperationReceipt.actualGasUsed.toString(),
+      transaction: `${explorer}${disableTransactionReceipt.transactionHash}`,
+      transactionBlockNumber: disableTransactionReceipt.blockNumber.toString(),
+      transactionGasUsed: disableTransactionReceipt.gasUsed.toString(),
     };
   }
 
@@ -598,7 +691,7 @@ async function main() {
         },
         negativeSimulations: { directCallRejected, wrongCalldataRejected },
         sameTransactionEvents: ["InputAccepted", "ActionExecuted", "NewFeedback"],
-        revocation: revocationEvidence,
+        delegationDisable: delegationDisableEvidence,
         transactions: {
           smartAccountDeployment: smartAccountDeploymentHash
             ? `${explorer}${smartAccountDeploymentHash}`

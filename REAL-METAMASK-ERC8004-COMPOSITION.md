@@ -148,13 +148,18 @@ redemption, and receipt readback. The evidence bundle identifies this path as
 The mock refuses non-local RPC endpoints, non-zero-value calls, and targets other than the Identity
 Registry and Delegation Manager. It does not reproduce or establish MetaMask's key custody, TEE,
 Guard Mode, policy service, simulation, Blockaid scanning, MEV protection, MFA, availability, or live
-transaction behavior. Revocation remains `SKIPPED` unless the separate bundler-backed trace is run.
+transaction behavior. Delegated-authority disable remains `SKIPPED` unless the separate
+bundler-backed trace is run.
 
-### Add a real ERC-7710 disable/revocation trace
+### Add a real ERC-7710 delegated-authority disable trace
 
 Set `BUNDLER_RPC_URL` to a Linea Sepolia ERC-4337 bundler endpoint. After the successful composition the
-runner funds the Hybrid smart account, sends a `disableDelegation` user operation, confirms the disabled
-delegation hash in the deployed Delegation Manager, and proves that the same redemption is rejected.
+runner confirms that the bundler supports the Hybrid account's EntryPoint, funds the smart account,
+checks the fresh delegation is enabled, and sends a `disableDelegation` user operation. It then requires
+all three independent on-chain/runtime bindings: `disabledDelegations(hash)` changes from `false` to
+`true`; the mined transaction emits the exact `DisabledDelegation` event for the delegation hash,
+Hybrid account, and Agent Wallet delegate; and replay reaches the Delegation Manager's specific
+`CannotUseADisabledDelegation()` error rather than merely failing in the already-terminal agreement.
 
 ```bash
 PRIVATE_KEY=<funded-owner-key> \
@@ -165,8 +170,9 @@ AGENT_WALLET_CLI_BIN=<path-to-mm> \
 npm run trace:agent-wallet-composition
 ```
 
-Without `BUNDLER_RPC_URL`, the evidence bundle reports revocation as `SKIPPED`; it never upgrades a
-read-only failure simulation into an on-chain revocation claim.
+Without `BUNDLER_RPC_URL`, the evidence bundle reports `delegationDisable` as `SKIPPED`; it never
+upgrades a read-only failure simulation into an on-chain authority-revocation claim. Disabling delegated
+authority does not revoke or correct the ERC-8004 feedback record.
 
 ## Public Linea Sepolia result
 
