@@ -1,0 +1,99 @@
+{
+  "schemaVersion": 1,
+  "capturedAt": "2026-07-24T17:10:00Z",
+  "result": "PASS",
+  "network": "lineaSepolia",
+  "chainId": 59141,
+  "purpose": "Mined on-chain rejection controls. Upgrades the three negative controls from read-only simulations / eth_call replays to actually mined reverted transactions sent by the MetaMask Agent Wallet itself.",
+  "method": {
+    "sender": "0x478c3A0377F6f93BfB3DB5167DC3d7dc8840E887",
+    "senderRole": "MetaMask Agent Wallet server wallet in Guard Mode, @metamask/agentic-cli 3.2.0",
+    "submission": "mm wallet send-transaction --chain-id 59141 --payload <json> --intent <honest description> --wait",
+    "explicitGasLimit": "0x7a120 (500000) because gas estimation fails for intentionally reverting transactions",
+    "guardModeBehavior": "Guard Mode did not refuse submission. For each control the CLI broadcast the transaction and reported status BROADCAST_FAILED with failureReason rpc_reverted while returning the transaction hash; each transaction was in fact mined with on-chain status 0 (reverted).",
+    "rawKeyFallback": "none \u2014 all three transactions were signed and sent by the Agent Wallet server wallet itself",
+    "payloadDerivation": "All payloads derive from public on-chain data only: the signed delegation and the exact submitInput calldata were decoded from the public composition transaction 0x7d05dfb2924476a4c846737fb0d153a9945e121851daefd9742b15608730698b; the post-disable replay reuses the verbatim calldata of public composition transaction 0xcdbc193bb4cffa2ed874fbf53e0bac618f9da2dcf6936f83e77ad42763693a9a. No private key, token, or credential was read or recorded."
+  },
+  "controls": {
+    "directDelegateCall": {
+      "claim": "The delegate cannot bypass the Delegation Manager and call the agreement directly",
+      "transactionHash": "0x9f55393735fa2db9dbb68c9c21325be626a0937b311d0c4b51e4b554ed7b42f1",
+      "url": "https://sepolia.lineascan.build/tx/0x9f55393735fa2db9dbb68c9c21325be626a0937b311d0c4b51e4b554ed7b42f1",
+      "from": "0x478c3A0377F6f93BfB3DB5167DC3d7dc8840E887",
+      "to": "0x0762cb4c14FA0EE0d6485cde6Ea349447f3DB879",
+      "toRole": "agreement clone from the 2026-07-24 first Agent Wallet composition run",
+      "calldata": "exact submitInput(advance) calldata pinned by the delegation's exact-calldata caveat, 164 bytes, decoded from the public composition transaction",
+      "blockNumber": 31078421,
+      "blockHash": "0x900b82f4d2ce6433609af13d4fd300b8ff576d8fe6b4b347fc1658de126ae756",
+      "timestamp": "2026-07-24T17:00:36Z",
+      "status": 0,
+      "gasUsed": 54302,
+      "revertBinding": {
+        "method": "eth_call of the identical payload from the identical sender pinned to the mined block 31078421",
+        "revertData": "0x1ba2e7b8000000000000000000000000478c3a0377f6f93bfb3db5167dc3d7dc8840e8870000000000000000000000004d3058571f7c94307b6138bc9f80c519786ff8db",
+        "error": "SenderAddressMismatch(0x478c3A0377F6f93BfB3DB5167DC3d7dc8840E887, 0x4D3058571F7C94307B6138BC9F80c519786ff8DB)",
+        "selector": "0x1ba2e7b8",
+        "interpretation": "The agreement's authorizedSender condition rejects the Agent Wallet as a direct caller; only the Hybrid smart account may submit. AgreementEngine.submitInput evaluates sender conditions (step 4) before the FSM transition lookup (step 6), so this authorization error fires even though the agreement is already DONE \u2014 the revert is authorization-specific, not a terminal-state artifact."
+      }
+    },
+    "alteredCalldataRedemption": {
+      "claim": "A redemption whose execution calldata differs from the delegated exact call is rejected by MetaMask's caveat enforcers",
+      "transactionHash": "0x112dc7cf6263ee63c14eee71a87e0c0fccb4e88b85e0db7af578174ce7146ee0",
+      "url": "https://sepolia.lineascan.build/tx/0x112dc7cf6263ee63c14eee71a87e0c0fccb4e88b85e0db7af578174ce7146ee0",
+      "from": "0x478c3A0377F6f93BfB3DB5167DC3d7dc8840E887",
+      "to": "0xdb9B1e94B5b69Df7e401DDbedE43491141047dB3",
+      "toRole": "deployed MetaMask Delegation Manager",
+      "calldata": "redeemDelegations over the same signed delegation decoded from the public composition transaction, with the execution calldata swapped from submitInput(...) to currentState()",
+      "delegationHash": "0xb3fa7b4ada1eed183e06425af5ec373af85f710d173003a71f120eb08f9e3947",
+      "delegationEnabledAtSend": true,
+      "blockNumber": 31078433,
+      "blockHash": "0x8540274b349cd20437e43c406694b502dfcee26e325f13cab3acfd1a3f291486",
+      "timestamp": "2026-07-24T17:01:22Z",
+      "status": 0,
+      "gasUsed": 101756,
+      "revertBinding": {
+        "method": "eth_call of the identical payload from the identical sender pinned to the mined block 31078433",
+        "error": "AllowedMethodsEnforcer:method-not-allowed",
+        "encoding": "Error(string) selector 0x08c379a0",
+        "interpretation": "The delegation carries four caveats. The allowed-methods enforcer is the first caveat violated by the swapped currentState() selector and rejects the redemption before execution; this is a caveat-layer rejection inside MetaMask's deployed enforcer stack, upstream of the exact-calldata enforcer that would also reject it."
+      }
+    },
+    "postDisableReplay": {
+      "claim": "The exact composition redemption is no longer executable after the delegated authority was disabled on-chain",
+      "transactionHash": "0x13fa6d0ff96a9b7800946833bbf407a6dd7564001a84deaa5a4e6e0cb60dfb34",
+      "url": "https://sepolia.lineascan.build/tx/0x13fa6d0ff96a9b7800946833bbf407a6dd7564001a84deaa5a4e6e0cb60dfb34",
+      "from": "0x478c3A0377F6f93BfB3DB5167DC3d7dc8840E887",
+      "to": "0xdb9B1e94B5b69Df7e401DDbedE43491141047dB3",
+      "toRole": "deployed MetaMask Delegation Manager",
+      "calldata": "verbatim 2212-byte calldata of the public composition transaction 0xcdbc193bb4cffa2ed874fbf53e0bac618f9da2dcf6936f83e77ad42763693a9a whose delegation 0x126d093bf90a3ae270d405d68c8f3928fa6f297a896c3a3918a0f4b6a1c3f449 was disabled in public transaction 0x6ff469b2e32bedad238284a700dde4daf2533d3e3a6d3cd6e92142a466d52e36",
+      "blockNumber": 31078440,
+      "blockHash": "0x3682c6d888c8fb145f9f342feb9ee53bc36cf3d57cddd5b1c87b47b4fb584fc0",
+      "timestamp": "2026-07-24T17:01:49Z",
+      "status": 0,
+      "gasUsed": 68136,
+      "revertBinding": {
+        "method": "eth_call of the identical payload from the identical sender pinned to the mined block 31078440",
+        "revertData": "0x05baa052",
+        "error": "CannotUseADisabledDelegation()",
+        "selector": "0x05baa052",
+        "interpretation": "The Delegation Manager's disabled-delegation check rejects the previously valid redemption. This upgrades the earlier eth_call-only failed-reuse evidence to a mined reverted transaction."
+      }
+    }
+  },
+  "walletLayerRecords": {
+    "directDelegateCall": {
+      "status": "BROADCAST_FAILED",
+      "failureReason": "rpc_reverted"
+    },
+    "alteredCalldataRedemption": {
+      "status": "BROADCAST_FAILED",
+      "failureReason": "rpc_reverted"
+    },
+    "postDisableReplay": {
+      "status": "BROADCAST_FAILED",
+      "failureReason": "rpc_reverted"
+    },
+    "note": "Verbatim CLI result fields. The wallet layer permitted submission of simulation-failing transactions when an explicit gas limit was supplied and classified each mined revert as BROADCAST_FAILED / rpc_reverted."
+  },
+  "proofCeiling": "These three mined transactions prove that on public Linea Sepolia the deployed contracts enforce the delegation boundary against real submitted transactions, not only in simulation: direct bypass reverts on the agreement's sender authorization, altered calldata reverts in MetaMask's caveat-enforcer stack, and a disabled delegation's exact redemption reverts in the Delegation Manager. They do not establish wallet-policy guarantees (Guard Mode permitted broadcasting known-reverting transactions with explicit gas), production readiness, or any behavior beyond these exact pinned calls."
+}

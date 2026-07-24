@@ -222,6 +222,35 @@ Delegation Manager's mapping changed from `false` to `true`, the mined transacti
 ERC-8004 lifecycle feedback remains unrevoked because disabling delegated authority is separate from
 correcting or revoking a reputation record.
 
+### 2026-07-24 — mined on-chain rejection controls
+
+The negative controls above were read-only simulations (`eth_call`). A follow-up pass upgraded all
+three rejection classes to actually mined reverted transactions, each sent by the MetaMask Agent
+Wallet itself with an explicit 500,000 gas limit (estimation fails for intentionally reverting
+transactions). The machine-readable evidence is preserved in
+[`evidence/linea-sepolia-mined-negative-controls-2026-07-24.json`](evidence/linea-sepolia-mined-negative-controls-2026-07-24.json).
+
+- Direct delegate → agreement call, mined revert at block `31078421`:
+  [`0x9f55…42f1`](https://sepolia.lineascan.build/tx/0x9f55393735fa2db9dbb68c9c21325be626a0937b311d0c4b51e4b554ed7b42f1)
+  — block-pinned replay binds the revert to `SenderAddressMismatch(agentWallet, hybridAccount)`. The
+  engine checks sender conditions before transition lookup, so the error is authorization-specific
+  even though the agreement was already `DONE`.
+- Altered-calldata redemption, mined revert at block `31078433`:
+  [`0x112d…6ee0`](https://sepolia.lineascan.build/tx/0x112dc7cf6263ee63c14eee71a87e0c0fccb4e88b85e0db7af578174ce7146ee0)
+  — the same signed delegation decoded from the public composition transaction, with execution
+  calldata swapped to `currentState()`; block-pinned replay binds the revert to
+  `AllowedMethodsEnforcer:method-not-allowed`, the first caveat in MetaMask's deployed enforcer
+  stack violated by the swap.
+- Post-disable replay of the exact composition calldata, mined revert at block `31078440`:
+  [`0x13fa…fb34`](https://sepolia.lineascan.build/tx/0x13fa6d0ff96a9b7800946833bbf407a6dd7564001a84deaa5a4e6e0cb60dfb34)
+  — block-pinned replay binds the revert to `CannotUseADisabledDelegation()` / `0x05baa052`,
+  upgrading the earlier `eth_call`-only failed-reuse evidence to a mined reverted transaction.
+
+All payloads derive from public on-chain calldata only; no private key or credential was involved.
+Wallet-layer record: Guard Mode did not refuse submission; for each control the CLI broadcast the
+transaction and reported `BROADCAST_FAILED` / `rpc_reverted` while the transaction mined with
+status `0`. No raw-key fallback was used — the Agent Wallet server wallet signed and sent all three.
+
 ## Acceptance status
 
 | Criterion | Status |
@@ -230,12 +259,13 @@ correcting or revoking a reputation record.
 | Real MetaMask Agent Wallet as ERC-7710 delegate, transaction sender, and ERC-8004 wallet | Pass on public Linea Sepolia |
 | Real ERC-8004 Identity and Reputation registries | Pass on pinned fork and public Linea Sepolia |
 | Unchanged `AgreementEngine` | Pass |
-| Direct-call and exact-calldata negative cases | Pass on pinned fork and public simulations |
+| Direct-call and exact-calldata negative cases | Pass on pinned fork, public simulations, and mined public reverts |
 | Agreement and ERC-8004 events in the same transaction | Pass on pinned fork and public Linea Sepolia |
 | Agreement clone recorded as ERC-8004 `clientAddress` | Pass on pinned fork and public Linea Sepolia |
 | Registry failure rolls the transition back | Pass on pinned fork |
 | Public explorer evidence for composition and delegated-authority disable | Pass |
 | Real on-chain delegated-authority disable | Pass on public Linea Sepolia: mapping, event, and exact replay error |
+| Mined reverted transactions for all three rejection classes | Pass on public Linea Sepolia at blocks `31078421`, `31078433`, `31078440` |
 
 ## Options and tradeoffs
 
