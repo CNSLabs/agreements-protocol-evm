@@ -324,6 +324,54 @@ function temporaryPolicy(
   );
 }
 
+function policyFingerprint(policy: string): string {
+  const wallet = policy.match(/wallet_address:\s*"([^"]+)"/);
+  const addresses = policy.match(
+    /addresses:\n  allowlist:\n((?:    - "[^"]+"\n)*)  blocklist:([^\n]*)/,
+  );
+  const chains = policy.match(
+    /  allowed_chains:\n((?:    - [0-9]+\n)*)  outflow_limits_usd:/,
+  );
+  const outflow = policy.match(/    rolling_24h: ([0-9]+(?:\.[0-9]+)?)/);
+  if (!wallet || !addresses || !chains || !outflow) {
+    throw new Error("Unexpected Agent Wallet policy shape");
+  }
+  const allowlist = Array.from(
+    addresses[1].matchAll(/    - "([^"]+)"\n/g),
+    (match) => match[1].toLowerCase(),
+  ).sort();
+  const allowedChains = Array.from(
+    chains[1].matchAll(/    - ([0-9]+)\n/g),
+    (match) => Number(match[1]),
+  ).sort((left, right) => left - right);
+  return JSON.stringify({
+    wallet: wallet[1].toLowerCase(),
+    allowlist,
+    blocklist: addresses[2].trim().toLowerCase(),
+    allowedChains,
+    rolling24hUsd: Number(outflow[1]),
+  });
+}
+
+async function waitForPolicyFingerprint(
+  expectedFingerprint: string,
+  expectedAddress: string,
+  timeoutMs = 15_000,
+): Promise<string> {
+  const deadline = Date.now() + timeoutMs;
+  let lastPolicy = "";
+  while (Date.now() < deadline) {
+    lastPolicy = (await getAgentWalletPolicy(expectedAddress)).policy;
+    if (policyFingerprint(lastPolicy) === expectedFingerprint) {
+      return lastPolicy;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+  }
+  throw new Error(
+    `Agent Wallet policy did not reach the expected semantic state within ${timeoutMs} ms`,
+  );
+}
+
 async function sendAgentWalletTransaction(
   agentWallet: string,
   to: string,
@@ -768,6 +816,8 @@ async function main() {
     VALIDATION_REGISTRY,
     validatorWallet.address,
   ]);
+  const originalPolicyFingerprint = policyFingerprint(originalPolicy);
+  const proofPolicyFingerprint = policyFingerprint(proofPolicy);
   let policyMutationAttempted = false;
   let policyRestored = false;
   let sweepRecord: JsonObject = {
@@ -779,18 +829,22 @@ async function main() {
 
   const restoreOriginalPolicy = async (): Promise<void> => {
     const current = (await getAgentWalletPolicy(agentWallet)).policy;
-    if (current === originalPolicy) {
+    const currentFingerprint = policyFingerprint(current);
+    if (currentFingerprint === originalPolicyFingerprint) {
       policyRestored = true;
       return;
     }
-    if (current !== proofPolicy) {
+    if (currentFingerprint !== proofPolicyFingerprint) {
       throw new Error(
         "Agent Wallet policy changed concurrently; refusing to overwrite it. Manual reconciliation is required.",
       );
     }
     await setAgentWalletPolicy(originalPolicy, agentWallet);
-    policyRestored =
-      (await getAgentWalletPolicy(agentWallet)).policy === originalPolicy;
+    const restoredPolicy = await waitForPolicyFingerprint(
+      originalPolicyFingerprint,
+      agentWallet,
+    );
+    policyRestored = restoredPolicy === originalPolicy;
     if (!policyRestored) {
       throw new Error("Original Agent Wallet policy did not round-trip exactly");
     }
@@ -801,10 +855,7 @@ async function main() {
     // update can succeed even if the CLI response is interrupted.
     policyMutationAttempted = true;
     await setAgentWalletPolicy(proofPolicy, agentWallet);
-    const confirmedProofPolicy = await getAgentWalletPolicy(agentWallet);
-    if (confirmedProofPolicy.policy !== proofPolicy) {
-      throw new Error("Temporary Agent Wallet policy did not round-trip exactly");
-    }
+    await waitForPolicyFingerprint(proofPolicyFingerprint, agentWallet);
 
     const funding = await sendAgentWalletTransaction(
       agentWallet,
