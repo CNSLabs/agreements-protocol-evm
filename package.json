@@ -30,7 +30,7 @@
   "author": "",
   "license": "SEE LICENSE IN LICENSE",
   "engines": {
-    "node": "20.x"
+    "node": "22.x"
   },
   "devDependencies": {
     "husky": "^9.1.7"
