@@ -6,6 +6,30 @@ on:
     branches: [main]
 
 jobs:
+  erc8004-periphery:
+    name: ERC-8004 periphery
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install all dependencies (workspaces)
+        run: npm ci
+
+      - name: Compile ERC-8004 periphery
+        run: npm run erc8004:compile
+
+      - name: Lint ERC-8004 periphery
+        run: npm run erc8004:lint
+
+      - name: Test ERC-8004 periphery
+        run: npm run erc8004:test
+
   test:
     runs-on: ubuntu-latest
 

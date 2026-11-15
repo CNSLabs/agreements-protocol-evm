@@ -5,26 +5,7 @@ import "@openzeppelin/contracts/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
-
-// ============================================================================
-// INTERFACES
-// ============================================================================
-
-interface IInputVerifier {
-    /**
-     * @notice Verifier MUST revert if verification fails.
-     * @param agreement  Address of the agreement clone contract.
-     * @param inputId    Logical input id for this submission.
-     * @param payload    Raw bytes passed to submitInput (e.g. abi.encode(DataField[])).
-     * @param sender     msg.sender of submitInput.
-     */
-    function verify(
-        address agreement,
-        bytes32 inputId,
-        bytes calldata payload,
-        address sender
-    ) external view;
-}
+import "./interfaces/IInputVerifier.sol";
 
 // ============================================================================
 // CONTRACT

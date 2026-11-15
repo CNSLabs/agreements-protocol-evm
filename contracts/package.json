@@ -5,8 +5,11 @@
   "main": "index.js",
   "scripts": {
     "compile": "hardhat compile",
+    "compile:erc8004": "hardhat compile",
     "lint": "tsc --noEmit",
+    "lint:erc8004": "tsc --noEmit",
     "test": "hardhat test",
+    "test:erc8004": "hardhat test test/erc8004-authority-verifier.test.ts",
     "test:unit": "hardhat test 'test/*.ts'",
     "test:integration": "hardhat test 'test/integration/*.ts'",
     "test:fork": "bash scripts/test-fork.sh",

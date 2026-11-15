@@ -23,6 +23,17 @@ const hardhatForkBlockNumber = process.env.HARDHAT_FORK_BLOCK_NUMBER
   ? Number(process.env.HARDHAT_FORK_BLOCK_NUMBER)
   : undefined;
 const enableGasReporter = process.env.REPORT_GAS === "true";
+// EDR requires a block-based history before it will execute historical calls
+// for a custom chain. This compatibility sequence selects Cancun for the
+// pinned snapshot; it is not intended as a full Linea activation timeline.
+const lineaSepoliaForkChains = {
+  59141: {
+    hardforkHistory: {
+      shanghai: 0,
+      cancun: 1,
+    },
+  },
+};
 
 if (
   hardhatForkBlockNumber !== undefined &&
@@ -34,6 +45,7 @@ if (
 const hardhatNetwork = enableFork
   ? {
       chainId: 59141,
+      chains: lineaSepoliaForkChains,
       forking: {
         url: lineaSepoliaRpcUrl,
         enabled: true,

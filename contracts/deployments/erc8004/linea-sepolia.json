@@ -1,0 +1,123 @@
+{
+  "schemaVersion": 1,
+  "network": {
+    "name": "linea-sepolia",
+    "chainId": 59141,
+    "publicRpcUrl": "https://rpc.sepolia.linea.build",
+    "explorerUrl": "https://sepolia.lineascan.build",
+    "forkBlockNumber": 31080433,
+    "forkBlockHash": "0x454179bb7d377dd61af9284a247304f0811b27a183970e53fe87e2f8c45773c7",
+    "forkBlockTimestamp": "2026-07-24T19:11:17.000Z"
+  },
+  "upstream": {
+    "repository": "https://github.com/erc-8004/erc-8004-contracts",
+    "commit": "68fc6765761a10fb26f0692df21c8a6f9d12b1be",
+    "addressConfig": "https://github.com/erc-8004/erc-8004-contracts/blob/68fc6765761a10fb26f0692df21c8a6f9d12b1be/scripts/addresses.ts",
+    "identitySource": "https://github.com/erc-8004/erc-8004-contracts/blob/68fc6765761a10fb26f0692df21c8a6f9d12b1be/contracts/IdentityRegistryUpgradeable.sol",
+    "reputationSource": "https://github.com/erc-8004/erc-8004-contracts/blob/68fc6765761a10fb26f0692df21c8a6f9d12b1be/contracts/ReputationRegistryUpgradeable.sol",
+    "validationSource": "https://github.com/erc-8004/erc-8004-contracts/blob/68fc6765761a10fb26f0692df21c8a6f9d12b1be/contracts/ValidationRegistryUpgradeable.sol",
+    "validationSourceLastChangedCommit": "27caef926f8529491256da5b86804cf827d44b93",
+    "sourceToRuntimeReproduction": "Not performed. The source pin, live implementation addresses, and runtime bytecode hashes are recorded independently."
+  },
+  "eip1967ImplementationSlot": "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc",
+  "registryOwner": "0x547289319C3e6aedB179C0b8e8aF0B5ACd062603",
+  "registries": {
+    "identity": {
+      "proxy": "0x8004A818BFB912233c491871b3d84c89A494BD9e",
+      "version": "2.0.0",
+      "proxyRuntimeBytecodeBytes": 130,
+      "proxyRuntimeBytecodeHash": "0xd0e45b1d89fa9b6cc7e97c1f155d64180e5c232aaccf9900ef9d4fd738c02b41",
+      "implementation": "0x7274e874ca62410a93bd8bf61c69d8045e399c02",
+      "implementationRuntimeBytecodeBytes": 14474,
+      "implementationRuntimeBytecodeHash": "0xa5f9624ea85e45b3f4b8558581f03bfb3e6cefab278d7bf0500ec9bd065dc16f"
+    },
+    "reputation": {
+      "proxy": "0x8004B663056A597Dffe9eCcC1965A193B7388713",
+      "version": "2.0.0",
+      "identityRegistry": "0x8004A818BFB912233c491871b3d84c89A494BD9e",
+      "proxyRuntimeBytecodeBytes": 130,
+      "proxyRuntimeBytecodeHash": "0xd0e45b1d89fa9b6cc7e97c1f155d64180e5c232aaccf9900ef9d4fd738c02b41",
+      "implementation": "0x16e0fa7f7c56b9a767e34b192b51f921be31da34",
+      "implementationRuntimeBytecodeBytes": 10491,
+      "implementationRuntimeBytecodeHash": "0x38602de97f1bd86f0a4729f7f3c0a78b1d27892e6eb581272cce5504a68fd00b"
+    },
+    "validation": {
+      "proxy": "0x8004Cb1BF31DAf7788923b405b754f57acEB4272",
+      "version": "2.0.0",
+      "identityRegistry": "0x8004A818BFB912233c491871b3d84c89A494BD9e",
+      "proxyRuntimeBytecodeBytes": 130,
+      "proxyRuntimeBytecodeHash": "0xd0e45b1d89fa9b6cc7e97c1f155d64180e5c232aaccf9900ef9d4fd738c02b41",
+      "implementation": "0xDB31f5d9167f8ebc8B30FbBF814c4d297c2D7F99",
+      "implementationRuntimeBytecodeBytes": 5876,
+      "implementationRuntimeBytecodeHash": "0x14ffccec8b46c9175bb80327a5471b0333596aed02e2ff500d772bd505a303c6"
+    }
+  },
+  "observedUsageAtForkBlock": {
+    "classification": "CNS-operated test activity; not evidence of independent ecosystem adoption",
+    "completeSequentialAgentIdRange": [
+      0,
+      1,
+      2
+    ],
+    "nextAgentIdObservedAbsent": 3,
+    "agents": [
+      {
+        "agentId": 0,
+        "owner": "0x60D84A7dBF7e7a80725655BDAB7991B4755Ce8d6",
+        "agentWallet": "0x60D84A7dBF7e7a80725655BDAB7991B4755Ce8d6",
+        "agentURI": "data:application/json,{\"name\":\"Agreement composition trace provider\"}",
+        "reputationClients": [
+          "0xc5E912DDC58AEb998E389E086C96f3E6A250c5Dd"
+        ],
+        "validationRequestHashes": []
+      },
+      {
+        "agentId": 1,
+        "owner": "0x478c3A0377F6f93BfB3DB5167DC3d7dc8840E887",
+        "agentWallet": "0x478c3A0377F6f93BfB3DB5167DC3d7dc8840E887",
+        "agentURI": "data:application/json,%7B%22name%22%3A%22MetaMask%20Agent%20Wallet%20agreement%20composition%20trace%22%7D",
+        "reputationClients": [
+          "0x0762cb4c14FA0EE0d6485cde6Ea349447f3DB879"
+        ],
+        "validationRequestHashes": []
+      },
+      {
+        "agentId": 2,
+        "owner": "0x478c3A0377F6f93BfB3DB5167DC3d7dc8840E887",
+        "agentWallet": "0x478c3A0377F6f93BfB3DB5167DC3d7dc8840E887",
+        "agentURI": "data:application/json,%7B%22name%22%3A%22MetaMask%20Agent%20Wallet%20agreement%20composition%20trace%22%7D",
+        "reputationClients": [
+          "0xd0465017fb4A3c603cb3b315C0EF82a3d21E3A4d"
+        ],
+        "validationRequestHashes": [
+          "0xf822cb6a8780c46484813b4d8453832cb6647485c2b05ed04db134183fbedcc3"
+        ]
+      }
+    ]
+  },
+  "knownPublicTransactions": {
+    "agreementCompositionAndReputationFeedback": {
+      "hash": "0xcdbc193bb4cffa2ed874fbf53e0bac618f9da2dcf6936f83e77ad42763693a9a",
+      "blockNumber": 31077981,
+      "blockHash": "0x10c3d8e12295e719bf664ee81f29cc9ac6cd41ac4a060995256ecb09f9799444",
+      "status": 1,
+      "url": "https://sepolia.lineascan.build/tx/0xcdbc193bb4cffa2ed874fbf53e0bac618f9da2dcf6936f83e77ad42763693a9a"
+    },
+    "validationRequest": {
+      "hash": "0xd81827772af77710744fa91f0356a691573448c2f2a64dd4dc4d9fcc69b8da0d",
+      "blockNumber": 31080433,
+      "blockHash": "0x454179bb7d377dd61af9284a247304f0811b27a183970e53fe87e2f8c45773c7",
+      "status": 1,
+      "from": "0x478c3A0377F6f93BfB3DB5167DC3d7dc8840E887",
+      "validator": "0xf39cAc17C4E6BfF5523f532Ee3D57EB13BA99d34",
+      "agentId": 2,
+      "requestHash": "0xf822cb6a8780c46484813b4d8453832cb6647485c2b05ed04db134183fbedcc3",
+      "responseCountAtForkBlock": 0,
+      "url": "https://sepolia.lineascan.build/tx/0xd81827772af77710744fa91f0356a691573448c2f2a64dd4dc4d9fcc69b8da0d"
+    }
+  },
+  "proofBoundary": {
+    "established": "At the pinned block, the canonical ERC-8004 v2.0.0 registries are deployed and cross-wired on Linea Sepolia; three CNS-operated test agents have one Reputation record each; and agent 2 has one mined Validation request.",
+    "notEstablished": "This snapshot does not establish an end-to-end Validation request/response run, mined rejection controls, signer cleanup, third-party validator independence, maintainer endorsement, audit status, production readiness, demand, or token necessity. A response/control/cleanup PASS artifact had not been committed when this manifest was prepared."
+  }
+}
