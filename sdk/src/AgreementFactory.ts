@@ -9,6 +9,7 @@ import {
   decodeEventLog,
   encodeAbiParameters,
   keccak256,
+  recoverTypedDataAddress,
   stringToHex,
 } from 'viem';
 import { executeTransaction, readContractResult } from "./transactions.js";
@@ -411,22 +412,18 @@ export class AgreementFactory {
    * @param deadline - Unix timestamp when the permit expires
    * @param options - Optional configuration (docUri + initValues)
    */
-  async createPermitSignature(
-    walletClient: WalletClient,
+  /**
+   * Build the exact EIP-712 typed-data payload the on-chain factory verifies for a create-permit.
+   * Single source of truth shared by `createPermitSignature` (sign) and `verifyPermitSignature`
+   * (recover), so the two can never drift. `nonce` is the signer's CURRENT on-chain nonce.
+   */
+  private async buildPermitTypedData(
+    signer: Hex,
     agreement: AgreementJson,
     deadline: number,
     options?: CreateAgreementOptions,
-  ): Promise<{
-    signature: CreateAgreementPermitSignature;
-    signerAddress: Hex;
-  }> {
-    const account = walletClient.account;
-    if (!account) {
-      throw new Error("WalletClient must be connected to an account to sign typed data");
-    }
-
-    const signerAddress = account.address as Hex;
-    const nonce = await this.getNonce(signerAddress);
+  ) {
+    const nonce = await this.getNonce(signer);
 
     const params = transformAgreementToOnChainParams(
       agreement,
@@ -434,12 +431,6 @@ export class AgreementFactory {
       options?.initValues,
     );
     const verifiers = options?.verifiers ?? params.verifiers;
-
-    const inputDefsHash = this.hashInputDefs(params.inputDefs);
-    const transitionsHash = this.hashTransitions(params.transitions);
-    const initVarsHash = this.hashInitVars(params.initVars);
-    const verifiersHash = this.hashVerifiers(verifiers);
-    const actionsHash = this.hashActions(params.actions);
 
     const chainId = await this.clients.publicClient.getChainId();
     const domain = {
@@ -468,20 +459,46 @@ export class AgreementFactory {
       docUri: params.docUri,
       docHash: params.docHash,
       initialState: params.initialState,
-      inputDefsHash,
-      transitionsHash,
-      initVarsHash,
-      verifiersHash,
-      actionsHash,
+      inputDefsHash: this.hashInputDefs(params.inputDefs),
+      transitionsHash: this.hashTransitions(params.transitions),
+      initVarsHash: this.hashInitVars(params.initVars),
+      verifiersHash: this.hashVerifiers(verifiers),
+      actionsHash: this.hashActions(params.actions),
       nonce,
       deadline: BigInt(deadline),
     } as const;
+
+    return { domain, types, message };
+  }
+
+  async createPermitSignature(
+    walletClient: WalletClient,
+    agreement: AgreementJson,
+    deadline: number,
+    options?: CreateAgreementOptions,
+  ): Promise<{
+    signature: CreateAgreementPermitSignature;
+    signerAddress: Hex;
+  }> {
+    const account = walletClient.account;
+    if (!account) {
+      throw new Error("WalletClient must be connected to an account to sign typed data");
+    }
+
+    const signerAddress = account.address as Hex;
 
     // Optional sanity check: ensure our local typehash matches the contract's constant.
     // (If this ever fails, the permit string in PERMIT_WITH_ACTIONS_TYPE is wrong.)
     if (!PERMIT_WITH_ACTIONS_TYPEHASH) {
       throw new Error("PERMIT_WITH_ACTIONS_TYPEHASH not initialized");
     }
+
+    const { domain, types, message } = await this.buildPermitTypedData(
+      signerAddress,
+      agreement,
+      deadline,
+      options,
+    );
 
     const signatureHex = await walletClient.signTypedData({
       account,
@@ -496,6 +513,48 @@ export class AgreementFactory {
     const v = parseInt(signatureHex.slice(130, 132), 16);
 
     return { signature: { v, r, s }, signerAddress };
+  }
+
+  /**
+   * Recover the signer of a create-permit and check it matches `signer`, recomputing the digest
+   * from the EXACT params that will be submitted on-chain (same docUri/initValues, and the same
+   * on-chain nonce the factory reads). Use this server-side BEFORE relaying a permit to turn an
+   * opaque on-chain `InvalidSignature()` revert into an actionable pre-flight check.
+   *
+   * Returns `{ valid, recovered }` rather than throwing, so the caller decides how to surface a
+   * mismatch (e.g. a 409 naming the offending field).
+   */
+  async verifyPermitSignature(
+    signer: Hex,
+    agreement: AgreementJson,
+    deadline: number,
+    signature: CreateAgreementPermitSignature,
+    options?: CreateAgreementOptions,
+  ): Promise<{ valid: boolean; recovered: Hex }> {
+    const { domain, types, message } = await this.buildPermitTypedData(
+      signer,
+      agreement,
+      deadline,
+      options,
+    );
+
+    const v = signature.v < 27 ? signature.v + 27 : signature.v;
+    const signatureHex = `${signature.r}${signature.s.slice(2)}${v
+      .toString(16)
+      .padStart(2, "0")}` as Hex;
+
+    const recovered = (await recoverTypedDataAddress({
+      domain,
+      types,
+      primaryType: "PermitAgreementWithActions",
+      message,
+      signature: signatureHex,
+    })) as Hex;
+
+    return {
+      valid: recovered.toLowerCase() === signer.toLowerCase(),
+      recovered,
+    };
   }
 
   /**
