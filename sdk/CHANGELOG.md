@@ -54,6 +54,11 @@ contracts. The names exported from the package root are the same as in 0.1.4.
   has accepted so far (the contract's new `stateNonce()` getter).
 - `AgreementFactory.createDeterministicPermitSignature`, described above.
 
+### Dependencies
+
+- `viem` moves from 2.43.2 to 2.57.20, which brings a patched `ws`. The pin is
+  still exact.
+
 ### Deployments
 
 The bundled deployment registry (`getDeploymentByChainId` and related helpers)
