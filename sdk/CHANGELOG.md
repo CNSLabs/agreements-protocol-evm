@@ -62,6 +62,7 @@ contracts. The names exported from the package root are the same as in 0.1.4.
 ### Deployments
 
 The bundled deployment registry (`getDeploymentByChainId` and related helpers)
-is unchanged and still lists the V1.0 deployments. V1.1 addresses will be added
-once the contracts are deployed; until then, pass the factory address of a V1.1
-deployment explicitly.
+lists V1.1 on Linea Sepolia (chain 59141). Its record keeps the V1.0 pair it
+replaced under `legacy`. The other four networks still list their V1.0
+deployments, which this client cannot drive with permits: until V1.1 is
+deployed there, pass a V1.1 factory address explicitly on those networks.

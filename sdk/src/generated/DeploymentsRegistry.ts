@@ -17,12 +17,21 @@ export const DeploymentsRegistry = {
       "deployer": "0x3793901C5eBB531F6CE5cE6E14a900BD3750591b"
     },
     "59141": {
-      "implementation": "0x1F0f9c889E6c762D8D5669c65a1A8fDFbEe38664",
-      "factory": "0x26Ff3AdEC23fC5778f190371B1CcCadDa74e26c8",
+      "implementation": "0x517B0018E9e0C96Bc922c285195cfF9886331287",
+      "factory": "0x09bA6eFD6E09386a8696d9196f3530d09EB1d290",
       "chainId": "59141",
       "network": "lineaSepolia",
-      "deployedAt": "2026-04-28T18:27:40.269Z",
-      "deployer": "0x2a6fFb5341F8C1cE123343162E3351F1B6286C43"
+      "deployedAt": "2026-11-16T23:12:13.654Z",
+      "deployer": "0x3793901C5eBB531F6CE5cE6E14a900BD3750591b",
+      "version": "1.1",
+      "legacy": {
+        "version": "1.0",
+        "implementation": "0x1F0f9c889E6c762D8D5669c65a1A8fDFbEe38664",
+        "factory": "0x26Ff3AdEC23fC5778f190371B1CcCadDa74e26c8",
+        "deployedAt": "2026-04-28T18:27:40.269Z",
+        "deployer": "0x2a6fFb5341F8C1cE123343162E3351F1B6286C43",
+        "deprecated": true
+      }
     },
     "59144": {
       "implementation": "0x9263A3a927939Aa76bE7bFa1850A1ef50454e122",
