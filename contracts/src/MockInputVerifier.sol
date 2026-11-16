@@ -11,3 +11,24 @@ contract MockInputVerifier is IInputVerifier {
         address
     ) external pure override {}
 }
+
+contract ExpectedSenderInputVerifier is IInputVerifier {
+    error UnexpectedSender(address actual, address expected);
+
+    address public immutable expectedSender;
+
+    constructor(address expectedSender_) {
+        expectedSender = expectedSender_;
+    }
+
+    function verify(
+        address,
+        bytes32,
+        bytes calldata,
+        address sender
+    ) external view override {
+        if (sender != expectedSender) {
+            revert UnexpectedSender(sender, expectedSender);
+        }
+    }
+}
