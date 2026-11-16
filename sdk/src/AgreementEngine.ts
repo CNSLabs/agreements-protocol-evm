@@ -170,6 +170,24 @@ export class AgreementEngine {
   }
 
   /**
+   * Get the number of inputs the agreement has accepted so far
+   *
+   * Input permits bind this value together with the current state, so a permit
+   * is valid for exactly one position in the agreement's history.
+   *
+   * @returns The agreement's state nonce
+   */
+  async getStateNonce(): Promise<bigint> {
+    const stateNonce = await readContractResult<typeof engineAbi, 'stateNonce', bigint | number>(this.publicClient, {
+      address: this.address,
+      abi: engineAbi,
+      functionName: 'stateNonce',
+      args: [],
+    });
+    return BigInt(stateNonce);
+  }
+
+  /**
    * Get the initial state of the agreement
    * 
    * @returns The initial state as bytes32
@@ -343,13 +361,18 @@ export class AgreementEngine {
 
   /**
    * Create an EIP-712 permit signature for submitting an input
+   *
+   * The permit names its signer (the wallet client's account) and is bound to
+   * the agreement's `currentState()` and `stateNonce()` as read at signing time.
+   * Once the agreement accepts any other input, the permit no longer verifies
+   * and a new one must be signed.
    * 
-   * @param signer - The signer that will create the signature (must be a Signer, not Provider)
+   * @param walletClient - viem WalletClient that signs the typed data (must be connected to an account)
    * @param agreement - The agreement JSON definition
    * @param inputId - The input identifier (e.g., "grantorData")
    * @param data - Plain object with field values
    * @param deadline - Unix timestamp when the permit expires
-   * @returns The signature components (v, r, s) and the signer address
+   * @returns The signature bytes and the signer address
    * 
    * @example
    * ```typescript
@@ -357,7 +380,7 @@ export class AgreementEngine {
    * const deadline = Math.floor(Date.now() / 1000) + 3600; // 1 hour from now
    * 
    * const { signature, signerAddress } = await agreement.createPermitSignature(
-   *   signer,
+   *   walletClient,
    *   agreementJson,
    *   "grantorData",
    *   { grantorName: "Alice" },
@@ -372,16 +395,27 @@ export class AgreementEngine {
     data: Record<string, unknown>,
     deadline: number
   ): Promise<{
-    signature: { v: number; r: string; s: string };
+    signature: Hex;
     signerAddress: Hex;
   }> {
-    // Get current nonce for the signer
     const account = walletClient.account;
     if (!account) {
       throw new Error("WalletClient must be connected to an account to sign typed data");
     }
     const signerAddress = account.address as Hex;
-    const nonce = await this.getNonce(signerAddress);
+
+    // The signer's permit nonce, and the position in the agreement's history
+    // this permit is valid for.
+    const [nonce, expectedState, expectedStateNonce] = await Promise.all([
+      this.getNonce(signerAddress),
+      readContractResult<typeof engineAbi, 'currentState', Hex>(this.publicClient, {
+        address: this.address,
+        abi: engineAbi,
+        functionName: 'currentState',
+        args: [],
+      }),
+      this.getStateNonce(),
+    ]);
 
     // Build the payload
     const payload = buildInputPayload(agreement, inputId, data);
@@ -390,7 +424,7 @@ export class AgreementEngine {
     // Get chain ID
     const chainId = await this.publicClient.getChainId();
 
-    // EIP-712 domain & types (kept structurally identical to previous ethers version)
+    // EIP-712 domain & types. Must match AgreementEngine.sol exactly (PERMIT_TYPEHASH).
     const domain = {
       name: "AgreementEngine",
       version: "1",
@@ -400,16 +434,22 @@ export class AgreementEngine {
 
     const types = {
       PermitInput: [
+        { name: "signer", type: "address" },
         { name: "inputId", type: "bytes32" },
         { name: "payload", type: "bytes" },
+        { name: "expectedState", type: "bytes32" },
+        { name: "expectedStateNonce", type: "uint256" },
         { name: "nonce", type: "uint256" },
         { name: "deadline", type: "uint256" },
       ],
     } as const;
 
     const message = {
+      signer: signerAddress,
       inputId: inputIdBytes32,
       payload: payload,
+      expectedState,
+      expectedStateNonce,
       nonce: nonce,
       deadline: BigInt(deadline),
     } as const;
@@ -423,13 +463,8 @@ export class AgreementEngine {
       message,
     });
 
-    // Split signature into v, r, s
-    const r = `0x${signature.slice(2, 66)}`;
-    const s = `0x${signature.slice(66, 130)}`;
-    const v = parseInt(signature.slice(130, 132), 16);
-
     return {
-      signature: { v, r, s },
+      signature,
       signerAddress,
     };
   }
@@ -442,7 +477,7 @@ export class AgreementEngine {
    * @param inputId - The input identifier
    * @param data - Plain object with field values
    * @param deadline - Unix timestamp when the permit expires
-   * @param signature - The permit signature (v, r, s components)
+   * @param signature - The permit signature bytes (EOA signature, or bytes an ERC-1271 signer contract accepts)
    * @param waitForConfirmation - Whether to wait for transaction confirmation (default: false)
    * @returns Transaction hash, or receipt if waitForConfirmation is true
    * 
@@ -450,7 +485,7 @@ export class AgreementEngine {
    * ```typescript
    * // Signer creates permit off-chain
    * const { signature, signerAddress } = await agreement.createPermitSignature(
-   *   signer,
+   *   walletClient,
    *   agreementJson,
    *   "grantorData",
    *   { grantorName: "Alice" },
@@ -489,7 +524,7 @@ export class AgreementEngine {
     inputId: string,
     data: Record<string, unknown>,
     deadline: number,
-    signature: { v: number; r: string; s: string },
+    signature: Hex,
     waitForConfirmation: boolean = false
   ): Promise<Hash | TransactionReceipt> {
     return await withSdkSpan(
@@ -523,9 +558,7 @@ export class AgreementEngine {
             inputIdBytes32,
             payload,
             BigInt(deadline),
-            signature.v,
-            signature.r,
-            signature.s,
+            signature,
           ],
         };
 

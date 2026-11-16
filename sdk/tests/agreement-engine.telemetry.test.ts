@@ -57,11 +57,7 @@ describe("AgreementEngine telemetry", () => {
         effectiveDate: "2026-01-01",
       },
       Math.floor(Date.now() / 1000) + 3600,
-      {
-        v: 27,
-        r: "0x1111111111111111111111111111111111111111111111111111111111111111",
-        s: "0x2222222222222222222222222222222222222222222222222222222222222222",
-      },
+      `0x${"11".repeat(32)}${"22".repeat(32)}1b`,
       true,
     );
 
@@ -76,5 +72,11 @@ describe("AgreementEngine telemetry", () => {
     expect(outerSpan?.attributes["agreement.input_id"]).toBe("grantorData");
     expect(spans.some((span) => span.name === "evm.send_tx")).toBe(true);
     expect(spans.some((span) => span.name === "evm.wait_receipt")).toBe(true);
+
+    // The signature travels as one opaque bytes argument.
+    const request = walletClient.writeContract.mock.calls[0][0];
+    expect(request.functionName).toBe("submitInputWithPermit");
+    expect(request.args).toHaveLength(5);
+    expect(request.args[4]).toBe(`0x${"11".repeat(32)}${"22".repeat(32)}1b`);
   });
 });

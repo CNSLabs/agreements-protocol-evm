@@ -576,5 +576,95 @@ describe("AgreementEngine (integration) - grant-with-feedback FSM with Permits",
         expect(error.message).to.include("InvalidSignature");
       }
     });
+
+    it("rejects a permit signed before another input was accepted", async () => {
+      const [grantor, recipient] = await ethers.getSigners();
+      const { factory: deployedFactory } = await deployProtocol();
+      const factoryAddress = await deployedFactory.getAddress();
+      const { publicClient: grantorPublic, walletClient: grantorWallet } =
+        await createViemClientsForSigner(grantor);
+      const { publicClient: recipientPublic, walletClient: recipientWallet } =
+        await createViemClientsForSigner(recipient);
+      const factory = new AgreementFactoryClass(
+        { factoryAddress: factoryAddress as `0x${string}` },
+        { walletClient: grantorWallet, publicClient: grantorPublic }
+      );
+
+      const { address: agreementAddress } = await factory.createAgreement(grantWithFeedback, {
+        initValues: {
+          grantorEthAddress: grantor.address as Address,
+          recipientEthAddress: recipient.address as Address,
+        }
+      });
+
+      const agreement = new AgreementEngineClass(
+        agreementAddress,
+        grantorPublic,
+        grantorWallet
+      );
+      const agreementAsRecipient = new AgreementEngineClass(
+        agreementAddress,
+        recipientPublic,
+        recipientWallet
+      );
+
+      expect(await agreement.getStateNonce()).to.equal(0n);
+      await agreement.submitInput(grantWithFeedback, "grantorData", sampleInputs.grantorData);
+      expect(await agreement.getStateNonce()).to.equal(1n);
+
+      // The recipient signs a work submission early, while the agreement still
+      // waits for the recipient's signature.
+      const deadline = Math.floor(Date.now() / 1000) + 3600;
+      const earlyPermit = await createRecipientPermit(
+        agreementAddress,
+        recipient,
+        "workSubmission",
+        sampleInputs.workSubmission,
+        deadline
+      );
+
+      // Both parties sign directly, so the recipient's permit nonce is untouched.
+      await agreementAsRecipient.submitInput(grantWithFeedback, "recipientSigning", sampleInputs.recipientSigning);
+      await agreement.submitInput(grantWithFeedback, "grantorSigning", sampleInputs.grantorSigning);
+      expect(await agreement.getCurrentState(grantWithFeedback)).to.equal("AWAITING_WORK_SUBMISSION");
+      expect(await agreement.getStateNonce()).to.equal(3n);
+      expect(await agreement.getNonce(recipient.address as `0x${string}`)).to.equal(0n);
+
+      // The agreement now accepts workSubmission, but not on the early permit:
+      // it was signed for an earlier position in the agreement's history.
+      try {
+        await agreement.submitInputWithPermit(
+          earlyPermit.signerAddress,
+          grantWithFeedback,
+          "workSubmission",
+          sampleInputs.workSubmission,
+          deadline,
+          earlyPermit.signature
+        );
+        expect.fail("Expected transaction to revert with InvalidSignature");
+      } catch (error: any) {
+        expect(error.message).to.include("InvalidSignature");
+      }
+      expect(await agreement.getCurrentState(grantWithFeedback)).to.equal("AWAITING_WORK_SUBMISSION");
+
+      // A permit signed in the current state is accepted.
+      const currentPermit = await createRecipientPermit(
+        agreementAddress,
+        recipient,
+        "workSubmission",
+        sampleInputs.workSubmission,
+        deadline
+      );
+      await agreement.submitInputWithPermit(
+        currentPermit.signerAddress,
+        grantWithFeedback,
+        "workSubmission",
+        sampleInputs.workSubmission,
+        deadline,
+        currentPermit.signature
+      );
+      expect(await agreement.getCurrentState(grantWithFeedback)).to.equal("WORK_IN_REVIEW");
+      expect(await agreement.getStateNonce()).to.equal(4n);
+    });
   });
 });
