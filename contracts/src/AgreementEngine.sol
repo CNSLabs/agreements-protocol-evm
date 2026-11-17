@@ -161,10 +161,6 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
     bytes32 public initialState;
     bytes32 public currentState;
     address public owner;
-    /// @notice Number of inputs accepted so far. Input permits bind it together
-    ///         with `currentState`, so a permit is valid for exactly one position
-    ///         in the agreement's history. Packed with `owner`.
-    uint64 public stateNonce;
 
     // Single-agreement storage (no agreementId keys)
     mapping(bytes32 => InputDef) internal inputDefs;
@@ -175,14 +171,17 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
     // Optional per-transition actions, keyed by (fromState,inputId)
     mapping(bytes32 => mapping(bytes32 => Action)) internal actions;
     
-    // Permit functionality - nonce tracking per signer
+    // Permit functionality - nonce tracking per signer. Each accepted permit
+    // consumes the signer's current nonce, so a permit is single-use and a signer
+    // has at most one live permit on this agreement at a time. A signer withdraws
+    // an unsubmitted permit with `cancelPermits`.
     mapping(address => uint256) public nonces;
     
-    // EIP-712 typehash for permit. The signer binds its own address (so a
+    // EIP-712 typehash for permit. The signer binds its own address, so a
     // signature validated by a smart account cannot be presented for another
-    // account that accepts the same key) and the state it expects to act on.
+    // account that accepts the same key.
     bytes32 public constant PERMIT_TYPEHASH = keccak256(
-        "PermitInput(address signer,bytes32 inputId,bytes payload,bytes32 expectedState,uint256 expectedStateNonce,uint256 nonce,uint256 deadline)"
+        "PermitInput(address signer,bytes32 inputId,bytes payload,uint256 nonce,uint256 deadline)"
     );
 
     // ========================================================================
@@ -229,6 +228,10 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
         address indexed submitter,
         bytes32 indexed inputId
     );
+    /// @notice Emitted when a signer cancels the input permit it had outstanding.
+    /// @param signer The account whose permit nonce was consumed
+    /// @param newNonce The signer's permit nonce after the call
+    event PermitsCancelled(address indexed signer, uint256 newNonce);
     event ActionRegistered(
         bytes32 indexed fromState,
         bytes32 indexed inputId,
@@ -341,7 +344,6 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
 
         // 7. Update state (action reads may expect updated state; revert will roll this back).
         currentState = to;
-        stateNonce++;
 
         // 8. Optional action (atomic with transition)
         _executeActionIfAny(from, to, inputId);
@@ -358,10 +360,14 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
      * @param signature Opaque EOA or ERC-1271 signature bytes
      * @dev The signer creates an off-chain signature authorizing this specific input submission.
      *      Anyone can submit using this signature, but it must match exactly what was signed.
-     *      The signature covers the signer's address, `currentState` and `stateNonce` as the
-     *      signer read them: once any other input is accepted the permit no longer verifies
-     *      (`InvalidSignature`), so a withheld permit cannot land in a later state or in a
-     *      later visit to the same state.
+     *      The signature covers the signer's address, the input, its payload, the signer's
+     *      nonce on this agreement and the deadline. It does not name a state: the permit
+     *      stays usable until its deadline, in any state that accepts the input, until it
+     *      or another permit of the same signer is accepted, or the signer withdraws it
+     *      with `cancelPermits`. Several parties can therefore
+     *      sign up front and have their permits submitted in whatever order the agreement's
+     *      transitions allow. A payload should restate what the signer approves (a document
+     *      hash, an amount) rather than rely on values stored by earlier inputs.
      */
     function submitInputWithPermit(
         address signer,
@@ -385,8 +391,6 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
                 signer,
                 inputId,
                 keccak256(payload),
-                currentState,
-                uint256(stateNonce),
                 currentNonce,
                 deadline
             )
@@ -426,13 +430,36 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
         
         // Update state (revert will roll back)
         currentState = to;
-        stateNonce++;
 
         // Optional action (atomic with transition)
         _executeActionIfAny(from, to, inputId);
         
         emit InputAccepted(from, to, inputId, payload);
         emit InputSubmittedWithPermit(signer, msg.sender, inputId);
+    }
+
+    /**
+     * @notice Cancel the input permit the caller has signed for this agreement
+     *         and that has not been submitted yet.
+     * @dev Consumes the caller's current permit nonce. A permit carries the nonce
+     *      that was current when it was signed, so every unsubmitted permit of the
+     *      caller that names the consumed nonce stops verifying (`InvalidSignature`).
+     *      The next permit must be signed with the returned nonce.
+     *
+     *      Scope: the caller only, on this agreement only. Each agreement is its own
+     *      clone with its own nonces, so other signers and other agreements are
+     *      untouched. There is no signed path: a smart account (ERC-1271) cancels by
+     *      calling this from the account itself. `submitInput`, where the caller
+     *      submits directly, does not use the nonce and is unaffected.
+     *
+     *      One call consumes one nonce. A signer that deliberately signed permits
+     *      for later nonces calls once for each.
+     * @return newNonce The caller's permit nonce after the call
+     */
+    function cancelPermits() external returns (uint256 newNonce) {
+        if (owner == address(0)) revert NotInitialized();
+        newNonce = ++nonces[msg.sender];
+        emit PermitsCancelled(msg.sender, newNonce);
     }
 
     // ========================================================================

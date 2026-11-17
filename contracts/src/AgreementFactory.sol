@@ -13,11 +13,14 @@ import "./AgreementEngine.sol";
  * @dev Each clone is an isolated agreement instance. The factory enforces that
  *      the caller (msg.sender) becomes the owner of the deployed agreement.
  *
- *      Deterministic addresses are derived from the creator and the salt, so a
- *      predicted address can only be claimed by the account it was predicted for:
- *      the caller on the direct path, the signer on the permit path. Every permit
- *      names its signer, so a signature validated by a smart account (ERC-1271)
- *      cannot be presented for another account that accepts the same key.
+ *      Deterministic addresses are derived from the creator, the salt and the
+ *      agreement's contents (see `agreementDigest`). A predicted address can only
+ *      be claimed by the account it was predicted for (the caller on the direct
+ *      path, the signer on the permit path), and only by the exact agreement it
+ *      was predicted for: with the same creator and salt, different terms give a
+ *      different address. Every permit names its signer, so a signature validated
+ *      by a smart account (ERC-1271) cannot be presented for another account that
+ *      accepts the same key.
  */
 contract AgreementFactory is ReentrancyGuard, EIP712 {
     using Clones for address;
@@ -36,7 +39,7 @@ contract AgreementFactory is ReentrancyGuard, EIP712 {
     /// @notice EIP-712 typehash for deterministic creation permits.
     /// @dev In addition to the complete agreement parameters, the signer binds its
     ///      own address, the CREATE2 salt and the exact clone address this factory
-    ///      derives for that signer and salt.
+    ///      derives for that signer, salt and agreement.
     bytes32 public constant DETERMINISTIC_PERMIT_WITH_ACTIONS_TYPEHASH = keccak256(
         "PermitDeterministicAgreementWithActions(address signer,string docUri,bytes32 docHash,bytes32 initialState,bytes32 inputDefsHash,bytes32 transitionsHash,bytes32 initVarsHash,bytes32 verifiersHash,bytes32 actionsHash,bytes32 salt,address predictedAgreement,uint256 nonce,uint256 deadline)"
     );
@@ -122,8 +125,9 @@ contract AgreementFactory is ReentrancyGuard, EIP712 {
     /**
      * @notice Deploy a new agreement clone at a deterministic address
      * @dev The caller (msg.sender) becomes the owner. The address is derived from
-     *      the caller and the salt (see `predictAddress`), so no other account can
-     *      deploy to it. Reverts if a contract already exists at that address.
+     *      the caller, the salt and the agreement's contents (see `predictAddress`),
+     *      so no other account, and no other agreement, can be deployed to it.
+     *      Reverts if a contract already exists at that address.
      * @param salt User-provided salt, scoped to the caller
      * @param docUri Off-chain URI to full JSON/spec
      * @param docHash Content hash of the off-chain spec (integrity)
@@ -145,8 +149,12 @@ contract AgreementFactory is ReentrancyGuard, EIP712 {
         AgreementEngine.VerifierInit[] calldata verifiers_,
         AgreementEngine.ActionInit[] calldata actions_
     ) external nonReentrant returns (address agreement) {
-        // Deploy minimal proxy clone at the caller-scoped deterministic address
-        agreement = implementation.cloneDeterministic(_creatorSalt(msg.sender, salt));
+        // Deploy minimal proxy clone at the deterministic address reserved for
+        // this caller, salt and agreement
+        ContentHashes memory h = _contentHashes(docUri, inputDefs_, transitions_, initVars_, verifiers_, actions_);
+        agreement = implementation.cloneDeterministic(
+            _cloneSalt(msg.sender, salt, _agreementDigest(h, docHash, initialState))
+        );
 
         emit AgreementDeployed(agreement, msg.sender, docUri, docHash);
 
@@ -259,9 +267,10 @@ contract AgreementFactory is ReentrancyGuard, EIP712 {
     /**
      * @notice Create an agreement at a deterministic address using a permit signature.
      * @dev The signature binds the signer's address, all agreement parameters, the
-     *      CREATE2 salt, and the exact address this factory derives for that signer
-     *      and salt. A relayer cannot redirect the authorization to a different clone
-     *      address, and no other account can deploy to the signer's predicted address.
+     *      CREATE2 salt, and the exact address this factory derives for that signer,
+     *      salt and agreement. A relayer cannot redirect the authorization to a
+     *      different clone address, and neither another account nor another agreement
+     *      can be deployed to the signer's predicted address.
      *
      * @param signer The address that signed the permit (and will become the agreement owner).
      * @param salt User-provided salt, scoped to the signer.
@@ -299,29 +308,24 @@ contract AgreementFactory is ReentrancyGuard, EIP712 {
         // Verify signature
         uint256 currentNonce = nonces[signer];
 
-        // Compute hashes for arrays to keep typehash manageable
-        bytes32 inputDefsHash = keccak256(abi.encode(inputDefs_));
-        bytes32 transitionsHash = keccak256(abi.encode(transitions_));
-        bytes32 initVarsHash = keccak256(abi.encode(initVars_));
-        bytes32 verifiersHash = keccak256(abi.encode(verifiers_));
-        bytes32 actionsHash = keccak256(abi.encode(actions_));
-        address predictedAgreement = implementation.predictDeterministicAddress(
-            _creatorSalt(signer, salt),
-            address(this)
-        );
+        // Hash each part once: the same hashes feed the signed struct and the
+        // digest the clone address is derived from
+        ContentHashes memory h = _contentHashes(docUri, inputDefs_, transitions_, initVars_, verifiers_, actions_);
+        bytes32 cloneSalt = _cloneSalt(signer, salt, _agreementDigest(h, docHash, initialState));
+        address predictedAgreement = implementation.predictDeterministicAddress(cloneSalt, address(this));
 
         bytes32 structHash = keccak256(
             abi.encode(
                 DETERMINISTIC_PERMIT_WITH_ACTIONS_TYPEHASH,
                 signer,
-                keccak256(bytes(docUri)),
+                h.docUriHash,
                 docHash,
                 initialState,
-                inputDefsHash,
-                transitionsHash,
-                initVarsHash,
-                verifiersHash,
-                actionsHash,
+                h.inputDefsHash,
+                h.transitionsHash,
+                h.initVarsHash,
+                h.verifiersHash,
+                h.actionsHash,
                 salt,
                 predictedAgreement,
                 currentNonce,
@@ -336,8 +340,9 @@ contract AgreementFactory is ReentrancyGuard, EIP712 {
         // Increment nonce to prevent replay
         nonces[signer]++;
 
-        // Deploy minimal proxy clone at the signer-scoped deterministic address
-        agreement = implementation.cloneDeterministic(_creatorSalt(signer, salt));
+        // Deploy minimal proxy clone at the deterministic address reserved for
+        // this signer, salt and agreement
+        agreement = implementation.cloneDeterministic(cloneSalt);
 
         emit AgreementDeployed(agreement, signer, docUri, docHash);
         emit AgreementCreatedWithPermit(agreement, signer, msg.sender);
@@ -357,22 +362,101 @@ contract AgreementFactory is ReentrancyGuard, EIP712 {
     }
 
     /**
+     * @notice Digest of an agreement's contents, as bound into its deterministic address
+     * @dev Covers everything `initialize` receives except the owner: the document
+     *      URI and hash, the initial state, and the input, transition, variable,
+     *      verifier and action definitions. Changing any of them changes the digest.
+     *      Pass the result to `predictAddress`.
+     * @return digest The agreement's content digest
+     */
+    function agreementDigest(
+        string calldata docUri,
+        bytes32 docHash,
+        bytes32 initialState,
+        AgreementEngine.InputDef[] calldata inputDefs_,
+        AgreementEngine.Transition[] calldata transitions_,
+        AgreementEngine.DataField[] calldata initVars_,
+        AgreementEngine.VerifierInit[] calldata verifiers_,
+        AgreementEngine.ActionInit[] calldata actions_
+    ) external pure returns (bytes32 digest) {
+        return _agreementDigest(
+            _contentHashes(docUri, inputDefs_, transitions_, initVars_, verifiers_, actions_),
+            docHash,
+            initialState
+        );
+    }
+
+    /**
      * @notice Predict the address of a deterministic clone before deployment
      * @dev Uses the same derivation as both deterministic creation paths.
-     *      Address = keccak256(0xff ++ factory ++ keccak256(abi.encode(creator, salt)) ++ keccak256(cloneBytecode))
+     *      Address = keccak256(0xff ++ factory ++ keccak256(abi.encode(creator, salt, agreementDigest)) ++ keccak256(cloneBytecode))
      * @param creator The account the address is reserved for: the caller of
      *        `createAgreementDeterministic`, or the signer of a deterministic permit
      * @param salt The creator's salt
-     * @return predicted The address where that creator's clone would be deployed
+     * @param agreementDigest_ The content digest of the agreement (see `agreementDigest`)
+     * @return predicted The address where that creator's clone of that agreement would be deployed
      */
-    function predictAddress(address creator, bytes32 salt) external view returns (address predicted) {
-        return implementation.predictDeterministicAddress(_creatorSalt(creator, salt), address(this));
+    function predictAddress(
+        address creator,
+        bytes32 salt,
+        bytes32 agreementDigest_
+    ) external view returns (address predicted) {
+        return implementation.predictDeterministicAddress(
+            _cloneSalt(creator, salt, agreementDigest_),
+            address(this)
+        );
     }
 
-    /// @dev Scopes a user-provided salt to its creator, so that knowing a salt
-    ///      does not let another account deploy to the address it predicts.
-    function _creatorSalt(address creator, bytes32 salt) internal pure returns (bytes32) {
-        return keccak256(abi.encode(creator, salt));
+    /// @dev Hashes of the variable-length parts of an agreement's contents.
+    struct ContentHashes {
+        bytes32 docUriHash;
+        bytes32 inputDefsHash;
+        bytes32 transitionsHash;
+        bytes32 initVarsHash;
+        bytes32 verifiersHash;
+        bytes32 actionsHash;
+    }
+
+    function _contentHashes(
+        string calldata docUri,
+        AgreementEngine.InputDef[] calldata inputDefs_,
+        AgreementEngine.Transition[] calldata transitions_,
+        AgreementEngine.DataField[] calldata initVars_,
+        AgreementEngine.VerifierInit[] calldata verifiers_,
+        AgreementEngine.ActionInit[] calldata actions_
+    ) internal pure returns (ContentHashes memory h) {
+        h.docUriHash = keccak256(bytes(docUri));
+        h.inputDefsHash = keccak256(abi.encode(inputDefs_));
+        h.transitionsHash = keccak256(abi.encode(transitions_));
+        h.initVarsHash = keccak256(abi.encode(initVars_));
+        h.verifiersHash = keccak256(abi.encode(verifiers_));
+        h.actionsHash = keccak256(abi.encode(actions_));
+    }
+
+    function _agreementDigest(
+        ContentHashes memory h,
+        bytes32 docHash,
+        bytes32 initialState
+    ) internal pure returns (bytes32) {
+        return keccak256(
+            abi.encode(
+                h.docUriHash,
+                docHash,
+                initialState,
+                h.inputDefsHash,
+                h.transitionsHash,
+                h.initVarsHash,
+                h.verifiersHash,
+                h.actionsHash
+            )
+        );
+    }
+
+    /// @dev Scopes a user-provided salt to its creator and to the agreement's
+    ///      contents, so that knowing a salt lets no other account deploy to the
+    ///      address it predicts, and no different agreement can occupy it.
+    function _cloneSalt(address creator, bytes32 salt, bytes32 agreementDigest_) internal pure returns (bytes32) {
+        return keccak256(abi.encode(creator, salt, agreementDigest_));
     }
 
 }

@@ -130,8 +130,6 @@ async function fixture(
         { name: "signer", type: "address" },
         { name: "inputId", type: "bytes32" },
         { name: "payload", type: "bytes" },
-        { name: "expectedState", type: "bytes32" },
-        { name: "expectedStateNonce", type: "uint256" },
         { name: "nonce", type: "uint256" },
         { name: "deadline", type: "uint256" },
       ] },
@@ -139,8 +137,6 @@ async function fixture(
         signer: signer.address,
         inputId: INPUT,
         payload: encoded,
-        expectedState: await agreement.currentState(),
-        expectedStateNonce: await agreement.stateNonce(),
         nonce: await agreement.nonces(signer.address),
         deadline,
       }

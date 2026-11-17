@@ -6,7 +6,6 @@ import * as path from "path";
 
 import { AgreementEngine } from "../src/AgreementEngine.js";
 import { AgreementFactory } from "../src/AgreementFactory.js";
-import { stateToBytes32 } from "../src/transformer.js";
 import type { AgreementJson } from "../src/types.js";
 
 const SIGNER = "0x3333333333333333333333333333333333333333" as const;
@@ -67,14 +66,9 @@ describe("permit typed data", () => {
     );
   });
 
-  it("an input permit names its signer and the state it was signed in", async () => {
-    const currentState = stateToBytes32("SOME_STATE");
-    const { publicClient, walletClient } = mockClients({
-      nonces: 7n,
-      currentState,
-      // uint64 getters can decode to a number; the message must still carry a bigint
-      stateNonce: 3,
-    });
+  it("an input permit names its signer and carries the signer's nonce, not a state", async () => {
+    // Only the signer's nonce is read: a read of the state would throw here.
+    const { publicClient, walletClient } = mockClients({ nonces: 7n });
     const engine = new AgreementEngine(AGREEMENT, publicClient);
 
     const permit = await engine.createPermitSignature(
@@ -95,7 +89,7 @@ describe("permit typed data", () => {
     const typedData = walletClient.signTypedData.mock.calls[0][0];
     const signedType = typeString(typedData.types);
     expect(signedType).toBe(
-      "PermitInput(address signer,bytes32 inputId,bytes payload,bytes32 expectedState,uint256 expectedStateNonce,uint256 nonce,uint256 deadline)",
+      "PermitInput(address signer,bytes32 inputId,bytes payload,uint256 nonce,uint256 deadline)",
     );
     expect(contractSource("AgreementEngine")).toContain(`"${signedType}"`);
     expect(typedData.primaryType).toBe("PermitInput");
@@ -107,11 +101,12 @@ describe("permit typed data", () => {
     });
     expect(typedData.message).toMatchObject({
       signer: SIGNER,
-      expectedState: currentState,
-      expectedStateNonce: 3n,
       nonce: 7n,
       deadline: BigInt(DEADLINE),
     });
+    expect(Object.keys(typedData.message)).toEqual(
+      typedData.types.PermitInput.map((f: { name: string }) => f.name),
+    );
   });
 
   it("a creation permit names its signer", async () => {
@@ -173,7 +168,11 @@ describe("permit typed data", () => {
     const predictCall = readContract.mock.calls
       .map(([params]) => params as any)
       .find((params) => params.functionName === "predictAddress");
-    expect(predictCall.args).toEqual([SIGNER, SALT]);
+    expect(predictCall.args).toEqual([
+      SIGNER,
+      SALT,
+      factory.agreementDigest(grantSimpleJson, { initValues: INIT_VALUES }),
+    ]);
 
     const typedData = walletClient.signTypedData.mock.calls[0][0];
     const signedType = typeString(typedData.types);
@@ -194,7 +193,7 @@ describe("permit typed data", () => {
     );
   });
 
-  it("predictAddress asks the factory for the creator's address", async () => {
+  it("predictAddress asks the factory for the creator's address for that agreement", async () => {
     const { publicClient, walletClient, readContract } = mockClients({
       predictAddress: PREDICTED,
     });
@@ -202,8 +201,38 @@ describe("permit typed data", () => {
       { factoryAddress: FACTORY },
       { publicClient, walletClient },
     );
+    const options = { initValues: INIT_VALUES };
 
-    await expect(factory.predictAddress(SIGNER, SALT)).resolves.toBe(PREDICTED);
-    expect((readContract.mock.calls[0][0] as any).args).toEqual([SIGNER, SALT]);
+    await expect(factory.predictAddress(SIGNER, SALT, grantSimpleJson, options)).resolves.toBe(PREDICTED);
+    expect((readContract.mock.calls[0][0] as any).args).toEqual([
+      SIGNER,
+      SALT,
+      factory.agreementDigest(grantSimpleJson, options),
+    ]);
+  });
+
+  it("agreementDigest changes with any part of the agreement's contents", () => {
+    const { publicClient, walletClient } = mockClients({});
+    const factory = new AgreementFactory(
+      { factoryAddress: FACTORY },
+      { publicClient, walletClient },
+    );
+    const options = { initValues: INIT_VALUES };
+    const digest = factory.agreementDigest(grantSimpleJson, options);
+
+    expect(digest).toMatch(/^0x[0-9a-f]{64}$/);
+    expect(factory.agreementDigest(grantSimpleJson, options)).toBe(digest);
+    expect(
+      factory.agreementDigest(grantSimpleJson, {
+        initValues: { ...INIT_VALUES, recipientEthAddress: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" },
+      }),
+    ).not.toBe(digest);
+    expect(factory.agreementDigest(grantSimpleJson, { ...options, docUri: "ipfs://another-document" })).not.toBe(digest);
+    expect(
+      factory.agreementDigest(grantSimpleJson, {
+        ...options,
+        verifiers: [{ key: SALT, verifier: SIGNER }],
+      }),
+    ).not.toBe(digest);
   });
 });

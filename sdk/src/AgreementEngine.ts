@@ -170,24 +170,6 @@ export class AgreementEngine {
   }
 
   /**
-   * Get the number of inputs the agreement has accepted so far
-   *
-   * Input permits bind this value together with the current state, so a permit
-   * is valid for exactly one position in the agreement's history.
-   *
-   * @returns The agreement's state nonce
-   */
-  async getStateNonce(): Promise<bigint> {
-    const stateNonce = await readContractResult<typeof engineAbi, 'stateNonce', bigint | number>(this.publicClient, {
-      address: this.address,
-      abi: engineAbi,
-      functionName: 'stateNonce',
-      args: [],
-    });
-    return BigInt(stateNonce);
-  }
-
-  /**
    * Get the initial state of the agreement
    * 
    * @returns The initial state as bytes32
@@ -362,10 +344,13 @@ export class AgreementEngine {
   /**
    * Create an EIP-712 permit signature for submitting an input
    *
-   * The permit names its signer (the wallet client's account) and is bound to
-   * the agreement's `currentState()` and `stateNonce()` as read at signing time.
-   * Once the agreement accepts any other input, the permit no longer verifies
-   * and a new one must be signed.
+   * The permit names its signer (the wallet client's account) and carries the
+   * signer's current permit nonce on this agreement. It does not name a state:
+   * it stays usable until its deadline, in any state that accepts the input,
+   * until it or another permit of the same signer is accepted. Several parties
+   * can sign up front and have their permits submitted in whatever order the
+   * agreement's transitions allow. Because each permit uses the signer's
+   * current nonce, one signer has one live permit per agreement at a time.
    * 
    * @param walletClient - viem WalletClient that signs the typed data (must be connected to an account)
    * @param agreement - The agreement JSON definition
@@ -404,18 +389,8 @@ export class AgreementEngine {
     }
     const signerAddress = account.address as Hex;
 
-    // The signer's permit nonce, and the position in the agreement's history
-    // this permit is valid for.
-    const [nonce, expectedState, expectedStateNonce] = await Promise.all([
-      this.getNonce(signerAddress),
-      readContractResult<typeof engineAbi, 'currentState', Hex>(this.publicClient, {
-        address: this.address,
-        abi: engineAbi,
-        functionName: 'currentState',
-        args: [],
-      }),
-      this.getStateNonce(),
-    ]);
+    // The signer's permit nonce on this agreement
+    const nonce = await this.getNonce(signerAddress);
 
     // Build the payload
     const payload = buildInputPayload(agreement, inputId, data);
@@ -437,8 +412,6 @@ export class AgreementEngine {
         { name: "signer", type: "address" },
         { name: "inputId", type: "bytes32" },
         { name: "payload", type: "bytes" },
-        { name: "expectedState", type: "bytes32" },
-        { name: "expectedStateNonce", type: "uint256" },
         { name: "nonce", type: "uint256" },
         { name: "deadline", type: "uint256" },
       ],
@@ -448,8 +421,6 @@ export class AgreementEngine {
       signer: signerAddress,
       inputId: inputIdBytes32,
       payload: payload,
-      expectedState,
-      expectedStateNonce,
       nonce: nonce,
       deadline: BigInt(deadline),
     } as const;
@@ -571,6 +542,65 @@ export class AgreementEngine {
         );
 
         // Return hash if not waiting, full receipt if waiting
+        if (waitForConfirmation) {
+          return result as TransactionReceipt;
+        }
+        return result.transactionHash!;
+      },
+    );
+  }
+
+  /**
+   * Cancel the input permit the connected account has signed for this
+   * agreement and that has not been submitted yet
+   *
+   * Consumes the account's current permit nonce on this agreement, so any
+   * unsubmitted permit it signed with that nonce is no longer accepted. Other
+   * signers and other agreements are not affected. The transaction must be sent
+   * by the signer itself: there is no relayed form.
+   *
+   * @param waitForConfirmation - If true, waits for confirmation and returns the receipt
+   * @returns Transaction hash, or the receipt when waiting for confirmation
+   *
+   * @example
+   * ```typescript
+   * const agreement = new AgreementEngine("0x...", publicClient, walletClient);
+   * await agreement.cancelPermits(true);
+   * // Sign again with createPermitSignature: it reads the new nonce.
+   * ```
+   */
+  async cancelPermits(
+    waitForConfirmation: boolean = false
+  ): Promise<Hash | TransactionReceipt> {
+    return await withSdkSpan(
+      "agreement_engine.cancel_permits",
+      {
+        "blockchain.chain_id": this.publicClient.chain?.id,
+        "agreement.address": this.address,
+      },
+      async () => {
+        if (!this.walletClient) {
+          throw new Error(
+            "WalletClient required for cancelling permits. Pass a walletClient to the constructor."
+          );
+        }
+
+        const request: WriteContractParameters = {
+          chain: null,
+          account: this.walletClient.account!,
+          address: this.address,
+          abi: engineAbi,
+          functionName: 'cancelPermits',
+          args: [],
+        };
+
+        const result = await executeTransaction(
+          request,
+          this.publicClient,
+          this.walletClient,
+          waitForConfirmation
+        );
+
         if (waitForConfirmation) {
           return result as TransactionReceipt;
         }

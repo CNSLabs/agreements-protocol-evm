@@ -37,8 +37,6 @@ const PERMIT_INPUT = [
   { name: "signer", type: "address" },
   { name: "inputId", type: "bytes32" },
   { name: "payload", type: "bytes" },
-  { name: "expectedState", type: "bytes32" },
-  { name: "expectedStateNonce", type: "uint256" },
   ...TAIL,
 ];
 
@@ -65,6 +63,9 @@ const deploymentHashes = (d: Deployment) => ({
 });
 const createArgs = (d: Deployment) =>
   [d.docUri, d.docHash, d.initialState, d.inputDefs, d.transitions, d.initVars, d.verifiers, d.actions] as const;
+// The address the factory reserves for this creator, salt and agreement.
+const predict = async (factory: any, creator: string, salt: string, d: Deployment) =>
+  factory.predictAddress(creator, salt, await factory.agreementDigest(...createArgs(d)));
 
 describe("AgreementsProtocol (adversarial)", function () {
   async function deployProtocol() {
@@ -107,7 +108,7 @@ describe("AgreementsProtocol (adversarial)", function () {
       const { factory } = await deployProtocol();
       const [victim, attacker] = await ethers.getSigners();
       const salt = id("victim-salt");
-      const predicted = await factory.predictAddress(victim.address, salt);
+      const predicted = await predict(factory, victim.address, salt, empty("victim"));
 
       // The attacker front-runs with the same salt and its own agreement.
       const attackerAddress = await factory
@@ -116,7 +117,7 @@ describe("AgreementsProtocol (adversarial)", function () {
       await factory.connect(attacker).createAgreementDeterministic(salt, ...createArgs(empty("attacker")));
 
       expect(attackerAddress).to.not.equal(predicted);
-      expect(attackerAddress).to.equal(await factory.predictAddress(attacker.address, salt));
+      expect(attackerAddress).to.equal(await predict(factory, attacker.address, salt, empty("attacker")));
       expect(await ethers.provider.getCode(predicted)).to.equal("0x");
 
       // The victim still gets the address it predicted, as owner.
@@ -131,7 +132,7 @@ describe("AgreementsProtocol (adversarial)", function () {
       const [signer, attacker, relayer] = await ethers.getSigners();
       const salt = id("signed-salt");
       const deployment = empty("signed");
-      const predicted = await factory.predictAddress(signer.address, salt);
+      const predicted = await predict(factory, signer.address, salt, deployment);
       const signature = await signer.signTypedData(
         factoryDomain,
         {
@@ -167,104 +168,332 @@ describe("AgreementsProtocol (adversarial)", function () {
       expect(await (await ethers.getContractAt("AgreementEngine", predicted)).owner()).to.equal(signer.address);
     });
 
-    it("a creator's own salt still cannot be used twice", async function () {
+    it("the same agreement cannot be deployed twice under one creator and salt", async function () {
       const { factory } = await deployProtocol();
       const [creator] = await ethers.getSigners();
       const salt = id("once");
       await factory.connect(creator).createAgreementDeterministic(salt, ...createArgs(empty("first")));
       await expect(
-        factory.connect(creator).createAgreementDeterministic(salt, ...createArgs(empty("second")))
+        factory.connect(creator).createAgreementDeterministic(salt, ...createArgs(empty("first")))
       ).to.be.reverted;
     });
   });
 
-  describe("input permits are valid for one position in the agreement's history", function () {
-    const inputA = id("advance");
-    const inputB = id("rewind");
-    const [S0, S1, S2] = [id("S0"), id("S1"), id("S2")];
+  describe("deterministic addresses are bound to the agreement's contents", function () {
+    const withInput = (d: Deployment): Deployment => ({
+      ...d,
+      inputDefs: [{ id: id("sign"), fields: [], conditions: [], verifierKeys: [] }],
+      transitions: [{ fromState: d.initialState, toState: id("S1"), inputId: id("sign") }],
+    });
 
-    async function deployAgreement(factory: any, transitions: any[]) {
+    it("the same creator and salt with different terms gives a different address", async function () {
+      const { factory } = await deployProtocol();
+      const [creator] = await ethers.getSigners();
+      const salt = id("shared-salt");
+      const base = withInput(empty("terms"));
+      const variants: Deployment[] = [
+        base,
+        { ...base, docUri: "ipfs://other-uri" },
+        { ...base, docHash: id("other-document") },
+        { ...base, initialState: id("OTHER") },
+        { ...base, inputDefs: [{ id: id("sign"), fields: [], conditions: [], verifierKeys: [id("k")] }] },
+        { ...base, transitions: [{ fromState: base.initialState, toState: id("S2"), inputId: id("sign") }] },
+        { ...base, initVars: [{ id: id("amount"), fType: 0, data: coder.encode(["uint256"], [1n]) }] },
+        { ...base, verifiers: [{ key: id("k"), verifier: creator.address }] },
+        {
+          ...base,
+          actions: [{ fromState: base.initialState, inputId: id("sign"), target: creator.address, value: 0n, data: "0x" }],
+        },
+      ];
+
+      const predicted: string[] = [];
+      for (const variant of variants) {
+        predicted.push(await predict(factory, creator.address, salt, variant));
+      }
+      expect(new Set(predicted).size).to.equal(variants.length);
+
+      // Two of them deploy side by side under the one salt, each where predicted.
+      for (const index of [0, 2]) {
+        await expect(factory.connect(creator).createAgreementDeterministic(salt, ...createArgs(variants[index])))
+          .to.emit(factory, "AgreementDeployed")
+          .withArgs(predicted[index], creator.address, variants[index].docUri, variants[index].docHash);
+      }
+    });
+
+    it("an address predicted for one agreement cannot be occupied by another, even by its own creator", async function () {
+      const { factory } = await deployProtocol();
+      const [creator] = await ethers.getSigners();
+      const salt = id("reserved");
+      const agreed = withInput(empty("agreed-terms"));
+      const altered = { ...agreed, docHash: id("altered-terms") };
+      const predicted = await predict(factory, creator.address, salt, agreed);
+
+      const alteredAddress = await factory
+        .connect(creator)
+        .createAgreementDeterministic.staticCall(salt, ...createArgs(altered));
+      await factory.connect(creator).createAgreementDeterministic(salt, ...createArgs(altered));
+      expect(alteredAddress).to.not.equal(predicted);
+      expect(await ethers.provider.getCode(predicted)).to.equal("0x");
+
+      await factory.connect(creator).createAgreementDeterministic(salt, ...createArgs(agreed));
+      const deployed = await ethers.getContractAt("AgreementEngine", predicted);
+      expect(await deployed.docHash()).to.equal(agreed.docHash);
+    });
+
+    it("a deterministic permit deploys only the signed agreement at the signed address", async function () {
+      const { factory, factoryDomain, deadline } = await deployProtocol();
+      const [signer, relayer] = await ethers.getSigners();
+      const salt = id("permit-salt");
+      const agreed = withInput(empty("permit-terms"));
+      const predicted = await predict(factory, signer.address, salt, agreed);
+      const signature = await signer.signTypedData(
+        factoryDomain,
+        {
+          PermitDeterministicAgreementWithActions: [
+            ...CREATION_FIELDS,
+            { name: "salt", type: "bytes32" },
+            { name: "predictedAgreement", type: "address" },
+            ...TAIL,
+          ],
+        },
+        { signer: signer.address, ...deploymentHashes(agreed), salt, predictedAgreement: predicted, nonce: 0n, deadline }
+      );
+
+      // A relayer that swaps the terms is refused.
+      const altered = { ...agreed, initVars: [{ id: id("amount"), fType: 0, data: coder.encode(["uint256"], [1n]) }] };
+      await expect(
+        factory
+          .connect(relayer)
+          .createAgreementDeterministicWithPermit(signer.address, salt, ...createArgs(altered), deadline, signature)
+      ).to.be.revertedWithCustomError(factory, "InvalidSignature");
+
+      await expect(
+        factory
+          .connect(relayer)
+          .createAgreementDeterministicWithPermit(signer.address, salt, ...createArgs(agreed), deadline, signature)
+      )
+        .to.emit(factory, "AgreementCreatedWithPermit")
+        .withArgs(predicted, signer.address, relayer.address);
+    });
+  });
+
+  describe("input permits are single-use per signer and do not depend on other signers", function () {
+    const signA = id("partyASign");
+    const signB = id("partyBSign");
+    const [S0, A_SIGNED, B_SIGNED, SIGNED] = [id("S0"), id("A_SIGNED"), id("B_SIGNED"), id("SIGNED")];
+    const hashPayload = (fieldId: string, documentHash: string) =>
+      coder.encode(
+        ["tuple(bytes32 id,uint8 fType,bytes data)[]"],
+        [[{ id: fieldId, fType: 4, data: coder.encode(["bytes32"], [documentHash]) }]]
+      );
+
+    // Two parties approve one pinned document. Either may go first.
+    async function deployTwoSigner(factory: any, partyA: string, partyB: string) {
+      // SENDER_EQ_VAR_ADDRESS: the sender, or the permit's signer, must be the stored party
+      const issuer = (partyVar: string) => ({ op: 16, fieldId: partyVar, bytesArg: "0x" });
+      const partyVar = (name: string, party: string) => ({
+        id: id(name),
+        fType: 2,
+        data: coder.encode(["address"], [party]),
+      });
       const deployment: Deployment = {
-        ...empty("history"),
+        ...empty("two-signer"),
         initialState: S0,
         inputDefs: [
-          { id: inputA, fields: [], conditions: [], verifierKeys: [] },
-          { id: inputB, fields: [], conditions: [], verifierKeys: [] },
+          {
+            id: signA,
+            fields: [{ fieldId: id("aHash"), fType: 4, required: true, persist: true }],
+            conditions: [issuer(id("partyA"))],
+            verifierKeys: [],
+          },
+          {
+            id: signB,
+            fields: [{ fieldId: id("bHash"), fType: 4, required: true, persist: true }],
+            conditions: [issuer(id("partyB"))],
+            verifierKeys: [],
+          },
         ],
-        transitions,
+        initVars: [partyVar("partyA", partyA), partyVar("partyB", partyB)],
+        transitions: [
+          { fromState: S0, toState: A_SIGNED, inputId: signA },
+          { fromState: S0, toState: B_SIGNED, inputId: signB },
+          { fromState: A_SIGNED, toState: SIGNED, inputId: signB },
+          { fromState: B_SIGNED, toState: SIGNED, inputId: signA },
+        ],
       };
       const address = await factory.createAgreement.staticCall(...createArgs(deployment));
       await factory.createAgreement(...createArgs(deployment));
       return (await ethers.getContractAt("AgreementEngine", address)) as any;
     }
 
-    const signInput = (signer: any, domain: any, expectedState: string, expectedStateNonce: bigint, deadline: number) =>
+    const signInput = (signer: any, domain: any, inputId: string, payload: string, nonce: bigint, deadline: number) =>
       signer.signTypedData(
         domain,
         { PermitInput: PERMIT_INPUT },
-        { signer: signer.address, inputId: inputA, payload: emptyPayload, expectedState, expectedStateNonce, nonce: 0n, deadline }
+        { signer: signer.address, inputId, payload, nonce, deadline }
       );
 
-    it("a permit signed in one state is refused once the agreement has moved to another", async function () {
+    for (const first of ["A", "B"] as const) {
+      it(`two parties sign up front and party ${first}'s permit can be submitted first`, async function () {
+        const { factory, engineDomain, deadline } = await deployProtocol();
+        const [partyA, partyB, relayer] = await ethers.getSigners();
+        const agreement = await deployTwoSigner(factory, partyA.address, partyB.address);
+        const domain = engineDomain(await agreement.getAddress());
+        const documentHash = id("the pinned document");
+        const payloadA = hashPayload(id("aHash"), documentHash);
+        const payloadB = hashPayload(id("bHash"), documentHash);
+
+        // Both sign before anything is submitted.
+        const permitA = await signInput(partyA, domain, signA, payloadA, 0n, deadline);
+        const permitB = await signInput(partyB, domain, signB, payloadB, 0n, deadline);
+        const submitA = () =>
+          agreement.connect(relayer).submitInputWithPermit(partyA.address, signA, payloadA, deadline, permitA);
+        const submitB = () =>
+          agreement.connect(relayer).submitInputWithPermit(partyB.address, signB, payloadB, deadline, permitB);
+
+        await (first === "A" ? submitA() : submitB());
+        expect(await agreement.currentState()).to.equal(first === "A" ? A_SIGNED : B_SIGNED);
+        // Accepting one party's permit leaves the other's untouched.
+        await (first === "A" ? submitB() : submitA());
+        expect(await agreement.currentState()).to.equal(SIGNED);
+        expect(await agreement.nonces(partyA.address)).to.equal(1n);
+        expect(await agreement.nonces(partyB.address)).to.equal(1n);
+      });
+    }
+
+    it("one party's permit cannot stand in for the other party's input", async function () {
       const { factory, implementation, engineDomain, deadline } = await deployProtocol();
-      const [signer, other, relayer] = await ethers.getSigners();
-      const agreement = await deployAgreement(factory, [
-        { fromState: S0, toState: S1, inputId: inputA },
-        { fromState: S1, toState: S2, inputId: inputA },
-      ]);
-      // Signed in S0, meaning "move S0 -> S1".
-      const signature = await signInput(signer, engineDomain(await agreement.getAddress()), S0, 0n, deadline);
+      const [partyA, partyB, relayer] = await ethers.getSigners();
+      const agreement = await deployTwoSigner(factory, partyA.address, partyB.address);
+      const payloadB = hashPayload(id("bHash"), id("the pinned document"));
+      const permit = await signInput(partyA, engineDomain(await agreement.getAddress()), signB, payloadB, 0n, deadline);
 
-      await agreement.connect(other).submitInput(inputA, emptyPayload); // S0 -> S1 by someone else
-      expect(await agreement.stateNonce()).to.equal(1n);
-
-      // Before the fix this moved S1 -> S2 on the signer's authority.
       await expect(
-        agreement.connect(relayer).submitInputWithPermit(signer.address, inputA, emptyPayload, deadline, signature)
-      ).to.be.revertedWithCustomError(implementation, "InvalidSignature");
-      expect(await agreement.currentState()).to.equal(S1);
-      expect(await agreement.nonces(signer.address)).to.equal(0n);
+        agreement.connect(relayer).submitInputWithPermit(partyA.address, signB, payloadB, deadline, permit)
+      ).to.be.revertedWithCustomError(implementation, "SenderAddressMismatch");
+      expect(await agreement.currentState()).to.equal(S0);
     });
 
-    it("a withheld permit is refused in a later visit to the same state", async function () {
+    it("a used permit cannot be replayed, even in a state that accepts its input again", async function () {
       const { factory, implementation, engineDomain, deadline } = await deployProtocol();
       const [signer, other, relayer] = await ethers.getSigners();
-      const agreement = await deployAgreement(factory, [
-        { fromState: S0, toState: S1, inputId: inputA },
-        { fromState: S1, toState: S0, inputId: inputB },
-      ]);
-      const signature = await signInput(signer, engineDomain(await agreement.getAddress()), S0, 0n, deadline);
+      const [advance, rewind] = [id("advance"), id("rewind")];
+      const deployment: Deployment = {
+        ...empty("cycle"),
+        initialState: S0,
+        inputDefs: [
+          { id: advance, fields: [], conditions: [], verifierKeys: [] },
+          { id: rewind, fields: [], conditions: [], verifierKeys: [] },
+        ],
+        transitions: [
+          { fromState: S0, toState: A_SIGNED, inputId: advance },
+          { fromState: A_SIGNED, toState: S0, inputId: rewind },
+        ],
+      };
+      const address = await factory.createAgreement.staticCall(...createArgs(deployment));
+      await factory.createAgreement(...createArgs(deployment));
+      const agreement: any = await ethers.getContractAt("AgreementEngine", address);
+      const permit = await signInput(signer, engineDomain(address), advance, emptyPayload, 0n, deadline);
+      const submit = () =>
+        agreement.connect(relayer).submitInputWithPermit(signer.address, advance, emptyPayload, deadline, permit);
 
-      // The relayer withholds the permit while the agreement goes S0 -> S1 -> S0.
-      await agreement.connect(other).submitInput(inputA, emptyPayload);
-      await agreement.connect(other).submitInput(inputB, emptyPayload);
+      await submit();
+      await agreement.connect(other).submitInput(rewind, emptyPayload);
       expect(await agreement.currentState()).to.equal(S0);
-      expect(await agreement.stateNonce()).to.equal(2n);
 
-      await expect(
-        agreement.connect(relayer).submitInputWithPermit(signer.address, inputA, emptyPayload, deadline, signature)
-      ).to.be.revertedWithCustomError(implementation, "InvalidSignature");
+      await expect(submit()).to.be.revertedWithCustomError(implementation, "InvalidSignature");
       expect(await agreement.currentState()).to.equal(S0);
-
-      // A permit signed for the current position is accepted.
-      const fresh = await signInput(signer, engineDomain(await agreement.getAddress()), S0, 2n, deadline);
-      await expect(
-        agreement.connect(relayer).submitInputWithPermit(signer.address, inputA, emptyPayload, deadline, fresh)
-      )
-        .to.emit(agreement, "InputSubmittedWithPermit")
-        .withArgs(signer.address, relayer.address, inputA);
-      expect(await agreement.currentState()).to.equal(S1);
-      expect(await agreement.stateNonce()).to.equal(3n);
     });
 
-    it("a permit that names the wrong state nonce is refused even in the right state", async function () {
+    it("a signer's later permit supersedes an earlier unused one", async function () {
       const { factory, implementation, engineDomain, deadline } = await deployProtocol();
-      const [signer, , relayer] = await ethers.getSigners();
-      const agreement = await deployAgreement(factory, [{ fromState: S0, toState: S1, inputId: inputA }]);
-      const signature = await signInput(signer, engineDomain(await agreement.getAddress()), S0, 1n, deadline);
+      const [partyA, partyB, relayer] = await ethers.getSigners();
+      const agreement = await deployTwoSigner(factory, partyA.address, partyB.address);
+      const domain = engineDomain(await agreement.getAddress());
+      const stale = hashPayload(id("aHash"), id("an earlier draft"));
+      const current = hashPayload(id("aHash"), id("the pinned document"));
+
+      // Both carry nonce 0, so accepting one makes the other unusable.
+      const stalePermit = await signInput(partyA, domain, signA, stale, 0n, deadline);
+      const currentPermit = await signInput(partyA, domain, signA, current, 0n, deadline);
+      await agreement.connect(relayer).submitInputWithPermit(partyA.address, signA, current, deadline, currentPermit);
+
       await expect(
-        agreement.connect(relayer).submitInputWithPermit(signer.address, inputA, emptyPayload, deadline, signature)
+        agreement.connect(relayer).submitInputWithPermit(partyA.address, signA, stale, deadline, stalePermit)
       ).to.be.revertedWithCustomError(implementation, "InvalidSignature");
+    });
+
+    it("a signer cancels an unsubmitted permit, and only its own", async function () {
+      const { factory, implementation, engineDomain, deadline } = await deployProtocol();
+      const [partyA, partyB, relayer] = await ethers.getSigners();
+      const agreement = await deployTwoSigner(factory, partyA.address, partyB.address);
+      const domain = engineDomain(await agreement.getAddress());
+      const payloadA = hashPayload(id("aHash"), id("the pinned document"));
+      const payloadB = hashPayload(id("bHash"), id("the pinned document"));
+      const permitA = await signInput(partyA, domain, signA, payloadA, 0n, deadline);
+      const permitB = await signInput(partyB, domain, signB, payloadB, 0n, deadline);
+
+      // Party A changes its mind before the relayer submits.
+      await expect(agreement.connect(partyA).cancelPermits())
+        .to.emit(agreement, "PermitsCancelled")
+        .withArgs(partyA.address, 1n);
+      expect(await agreement.nonces(partyA.address)).to.equal(1n);
+      expect(await agreement.nonces(partyB.address)).to.equal(0n);
+
+      await expect(
+        agreement.connect(relayer).submitInputWithPermit(partyA.address, signA, payloadA, deadline, permitA)
+      ).to.be.revertedWithCustomError(implementation, "InvalidSignature");
+      expect(await agreement.currentState()).to.equal(S0);
+
+      // Party B's permit is untouched.
+      await agreement.connect(relayer).submitInputWithPermit(partyB.address, signB, payloadB, deadline, permitB);
+      expect(await agreement.currentState()).to.equal(B_SIGNED);
+
+      // Party A can still sign again, with its new nonce, or submit directly.
+      const again = await signInput(partyA, domain, signA, payloadA, 1n, deadline);
+      await agreement.connect(relayer).submitInputWithPermit(partyA.address, signA, payloadA, deadline, again);
+      expect(await agreement.currentState()).to.equal(SIGNED);
+      expect(await agreement.nonces(partyA.address)).to.equal(2n);
+    });
+
+    it("nobody can cancel another signer's permit, and cancelling does not block direct submission", async function () {
+      const { factory, engineDomain, deadline } = await deployProtocol();
+      const [partyA, partyB, relayer] = await ethers.getSigners();
+      const agreement = await deployTwoSigner(factory, partyA.address, partyB.address);
+      const domain = engineDomain(await agreement.getAddress());
+      const payloadA = hashPayload(id("aHash"), id("the pinned document"));
+      const payloadB = hashPayload(id("bHash"), id("the pinned document"));
+      const permitA = await signInput(partyA, domain, signA, payloadA, 0n, deadline);
+
+      // The relayer and party B each cancel: only their own nonces move.
+      await agreement.connect(relayer).cancelPermits();
+      await agreement.connect(partyB).cancelPermits();
+      expect(await agreement.nonces(partyA.address)).to.equal(0n);
+      await agreement.connect(relayer).submitInputWithPermit(partyA.address, signA, payloadA, deadline, permitA);
+      expect(await agreement.currentState()).to.equal(A_SIGNED);
+
+      // Party B cancelled, and still submits its own input directly.
+      await agreement.connect(partyB).submitInput(signB, payloadB);
+      expect(await agreement.currentState()).to.equal(SIGNED);
+    });
+
+    it("the implementation contract itself accepts no cancellation", async function () {
+      const { implementation } = await deployProtocol();
+      await expect(implementation.cancelPermits()).to.be.revertedWithCustomError(implementation, "NotInitialized");
+    });
+
+    it("a permit cannot carry a payload other than the one signed", async function () {
+      const { factory, implementation, engineDomain, deadline } = await deployProtocol();
+      const [partyA, partyB, relayer] = await ethers.getSigners();
+      const agreement = await deployTwoSigner(factory, partyA.address, partyB.address);
+      const signed = hashPayload(id("aHash"), id("the pinned document"));
+      const swapped = hashPayload(id("aHash"), id("a different document"));
+      const permit = await signInput(partyA, engineDomain(await agreement.getAddress()), signA, signed, 0n, deadline);
+
+      await expect(
+        agreement.connect(relayer).submitInputWithPermit(partyA.address, signA, swapped, deadline, permit)
+      ).to.be.revertedWithCustomError(implementation, "InvalidSignature");
+      expect(await agreement.currentState()).to.equal(S0);
     });
   });
 
@@ -321,7 +550,7 @@ describe("AgreementsProtocol (adversarial)", function () {
           signer: accountA,
           ...deploymentHashes(deployment),
           salt,
-          predictedAgreement: await factory.predictAddress(accountA, salt),
+          predictedAgreement: await predict(factory, accountA, salt, deployment),
           nonce: 0n,
           deadline,
         }
@@ -349,7 +578,7 @@ describe("AgreementsProtocol (adversarial)", function () {
       const signature = await key.signTypedData(
         engineDomain(address),
         { PermitInput: PERMIT_INPUT },
-        { signer: accountA, inputId, payload: emptyPayload, expectedState: id("S0"), expectedStateNonce: 0n, nonce: 0n, deadline }
+        { signer: accountA, inputId, payload: emptyPayload, nonce: 0n, deadline }
       );
 
       // Before the fix this was accepted with account B recorded as the signer.
