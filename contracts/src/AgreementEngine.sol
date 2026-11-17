@@ -131,6 +131,8 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
      * @dev If the action call fails, the entire submitInput reverts and the transition is not applied.
      *
      * `target.call(data)` is executed by this AgreementEngine clone (so msg.sender to `target` is the agreement).
+     * The target must have code when the transition runs. No ETH is forwarded: the
+     * engine cannot hold ETH, so `value` must be zero and creation reverts otherwise.
      */
     struct Action {
         address target;
@@ -199,6 +201,7 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
     error InvalidSignature();
     error InvalidNonce(address signer, uint256 provided, uint256 expected);
     error ActionTargetZero();
+    error ActionValueNotSupported(bytes32 fromState, bytes32 inputId, uint256 value);
     error ActionCallFailed(address target, bytes revertData);
     error ActionTargetHasNoCode(address target);
     error ActionERC20ReturnInvalid(address target, bytes returnData);
@@ -549,6 +552,9 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
         for (uint256 i = 0; i < actions_.length; i++) {
             ActionInit calldata a = actions_[i];
             if (a.target == address(0)) revert ActionTargetZero();
+            // The engine cannot hold ETH, so an action that forwards value could
+            // never execute and would block its transition for good.
+            if (a.value != 0) revert ActionValueNotSupported(a.fromState, a.inputId, a.value);
             actions[a.fromState][a.inputId] = Action({
                 target: a.target,
                 value: a.value,
@@ -1080,14 +1086,16 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
         Action storage a = actions[fromState][inputId];
         if (!a.exists) return;
 
+        // A call to an address without code succeeds and does nothing. Checked
+        // here rather than at creation, so a target may be deployed after the
+        // agreement as long as it exists when the transition runs.
+        if (a.target.code.length == 0) revert ActionTargetHasNoCode(a.target);
+
         bytes memory callData = a.data;
         bool isERC20Transfer = _isERC20TransferCall(callData);
-        if (isERC20Transfer && a.target.code.length == 0) {
-            revert ActionTargetHasNoCode(a.target);
-        }
 
-        // slither-disable-next-line arbitrary-send-eth
-        (bool ok, bytes memory ret) = a.target.call{value: a.value}(callData);
+        // No value is forwarded: `_storeActions` rejects actions that carry one.
+        (bool ok, bytes memory ret) = a.target.call(callData);
         if (!ok) revert ActionCallFailed(a.target, ret);
         if (isERC20Transfer && ret.length != 0) {
             if (ret.length != 32) revert ActionERC20ReturnInvalid(a.target, ret);

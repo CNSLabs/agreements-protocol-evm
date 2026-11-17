@@ -21,6 +21,22 @@ export const AgreementFactoryABI = [
     "type": "constructor"
   },
   {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "target",
+        "type": "address"
+      }
+    ],
+    "name": "AddressEmptyCode",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "FailedCall",
+    "type": "error"
+  },
+  {
     "inputs": [],
     "name": "FailedDeployment",
     "type": "error"

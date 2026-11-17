@@ -68,8 +68,13 @@ contracts. The names exported from the package root are the same as in 0.1.4.
 ### Limits
 
 - **Actions cannot send native ETH.** A V1.1 agreement has no way to receive
-  ETH, so a transition whose action carries a non-zero `value` reverts. Token
-  transfers and other calls with no ETH value are unaffected.
+  ETH, so the contracts refuse to create an agreement whose action carries a
+  non-zero `value` (`ActionValueNotSupported`), and the SDK refuses to build
+  one. Token transfers and other calls with no ETH value are unaffected.
+- **An action's target must be a deployed contract when its transition runs.**
+  If the target address has no code, the input reverts with
+  `ActionTargetHasNoCode` and the state does not move. The target may be
+  deployed after the agreement is created.
 
 ### Dependencies
 

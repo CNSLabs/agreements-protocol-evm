@@ -594,4 +594,127 @@ describe("AgreementsProtocol (adversarial)", function () {
         .withArgs(accountA, relayer.address, inputId);
     });
   });
+
+  describe("an action either takes effect or stops its transition", function () {
+    const inputId = id("sign");
+    const withAction = (name: string, action: { target: string; value?: bigint; data?: string }): Deployment => ({
+      ...empty(name),
+      inputDefs: [{ id: inputId, fields: [], conditions: [], verifierKeys: [] }],
+      transitions: [{ fromState: id("S0"), toState: id("S1"), inputId }],
+      actions: [
+        { fromState: id("S0"), inputId, target: action.target, value: action.value ?? 0n, data: action.data ?? "0x" },
+      ],
+    });
+    const mintCall = (to: string) =>
+      new ethers.Interface(["function mint(address to, uint256 amount)"]).encodeFunctionData("mint", [to, 5n]);
+
+    it("an agreement whose action forwards ETH cannot be created, on any creation path", async function () {
+      const { implementation, factory, factoryDomain, deadline } = await deployProtocol();
+      const [creator, relayer] = await ethers.getSigners();
+      const token = await ethers.deployContract("TestERC20", ["Token", "TKN"]);
+      // The engine cannot hold ETH. Before the fix this agreement was created
+      // and then could never leave S0: the action reverted every time.
+      const deployment = withAction("eth-action", { target: await token.getAddress(), value: 1n });
+      const refused = (tx: Promise<unknown>) =>
+        expect(tx)
+          .to.be.revertedWithCustomError(implementation, "ActionValueNotSupported")
+          .withArgs(id("S0"), inputId, 1n);
+      const salt = id("eth-action-salt");
+
+      await refused(factory.connect(creator).createAgreement(...createArgs(deployment)));
+      await refused(factory.connect(creator).createAgreementDeterministic(salt, ...createArgs(deployment)));
+
+      const signature = await creator.signTypedData(
+        factoryDomain,
+        { PermitAgreementWithActions: [...CREATION_FIELDS, ...TAIL] },
+        { signer: creator.address, ...deploymentHashes(deployment), nonce: 0n, deadline }
+      );
+      await refused(
+        factory
+          .connect(relayer)
+          .createAgreementWithPermit(creator.address, ...createArgs(deployment), deadline, signature)
+      );
+
+      const deterministicSignature = await creator.signTypedData(
+        factoryDomain,
+        {
+          PermitDeterministicAgreementWithActions: [
+            ...CREATION_FIELDS,
+            { name: "salt", type: "bytes32" },
+            { name: "predictedAgreement", type: "address" },
+            ...TAIL,
+          ],
+        },
+        {
+          signer: creator.address,
+          ...deploymentHashes(deployment),
+          salt,
+          predictedAgreement: await predict(factory, creator.address, salt, deployment),
+          nonce: 0n,
+          deadline,
+        }
+      );
+      await refused(
+        factory
+          .connect(relayer)
+          .createAgreementDeterministicWithPermit(
+            creator.address,
+            salt,
+            ...createArgs(deployment),
+            deadline,
+            deterministicSignature
+          )
+      );
+
+      // A refused creation consumes nothing: the same permit still works for the
+      // same agreement without the value.
+      expect(await factory.nonces(creator.address)).to.equal(0n);
+    });
+
+    it("an action aimed at an address without code stops the transition", async function () {
+      const { implementation, factory } = await deployProtocol();
+      const [creator] = await ethers.getSigners();
+      const nowhere = ethers.Wallet.createRandom().address;
+
+      // Before the fix only token transfers were checked: any other call to an
+      // address without code succeeded, the state moved and ActionExecuted was
+      // emitted although nothing had happened.
+      const calls = { empty: "0x", approve: "0x095ea7b3" + "00".repeat(64), mint: mintCall(creator.address) };
+      for (const [name, data] of Object.entries(calls)) {
+        const deployment = withAction(`no-code-${name}`, { target: nowhere, data });
+        const address = await factory.createAgreement.staticCall(...createArgs(deployment));
+        await factory.createAgreement(...createArgs(deployment));
+        const agreement: any = await ethers.getContractAt("AgreementEngine", address);
+
+        await expect(agreement.submitInput(inputId, emptyPayload))
+          .to.be.revertedWithCustomError(implementation, "ActionTargetHasNoCode")
+          .withArgs(nowhere);
+        expect(await agreement.currentState()).to.equal(id("S0"));
+      }
+    });
+
+    it("a target deployed after the agreement is accepted once it exists", async function () {
+      const { implementation, factory } = await deployProtocol();
+      const [creator, , , deployer] = await ethers.getSigners();
+      // The agreement names a token that is not deployed yet.
+      const tokenAddress = ethers.getCreateAddress({ from: deployer.address, nonce: await deployer.getNonce() });
+      const deployment = withAction("late-target", { target: tokenAddress, data: mintCall(creator.address) });
+      const address = await factory.createAgreement.staticCall(...createArgs(deployment));
+      await factory.createAgreement(...createArgs(deployment));
+      const agreement: any = await ethers.getContractAt("AgreementEngine", address);
+
+      await expect(agreement.submitInput(inputId, emptyPayload))
+        .to.be.revertedWithCustomError(implementation, "ActionTargetHasNoCode")
+        .withArgs(tokenAddress);
+
+      const token: any = await ethers.deployContract("TestERC20", ["Token", "TKN"], deployer);
+      expect(await token.getAddress()).to.equal(tokenAddress);
+
+      await expect(agreement.submitInput(inputId, emptyPayload))
+        .to.emit(agreement, "ActionExecuted")
+        .withArgs(id("S0"), id("S1"), inputId, tokenAddress);
+      expect(await agreement.currentState()).to.equal(id("S1"));
+      expect(await token.balanceOf(creator.address)).to.equal(5n);
+    });
+  });
 });

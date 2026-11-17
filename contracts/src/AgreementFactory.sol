@@ -2,6 +2,7 @@
 pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/proxy/Clones.sol";
+import "@openzeppelin/contracts/utils/Address.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import "@openzeppelin/contracts/utils/cryptography/SignatureChecker.sol";
@@ -21,6 +22,14 @@ import "./AgreementEngine.sol";
  *      different address. Every permit names its signer, so a signature validated
  *      by a smart account (ERC-1271) cannot be presented for another account that
  *      accepts the same key.
+ *
+ *      Layout of the creation functions: each one hashes its arguments and encodes
+ *      the `initialize` call first, then hands the rest (events, the call itself)
+ *      to `_announceAndInitialize`. The creation functions take up to 19 stack
+ *      slots of calldata arguments, which leaves the compiler almost no room; kept
+ *      in this order they compile with room to spare. Interleaving other work
+ *      with the argument-heavy steps brings back "stack too deep" failures that
+ *      come and go with the optimizer settings and the library version.
  */
 contract AgreementFactory is ReentrancyGuard, EIP712 {
     using Clones for address;
@@ -102,24 +111,15 @@ contract AgreementFactory is ReentrancyGuard, EIP712 {
         AgreementEngine.VerifierInit[] calldata verifiers_,
         AgreementEngine.ActionInit[] calldata actions_
     ) external nonReentrant returns (address agreement) {
-        // Deploy minimal proxy clone (~45k gas)
-        agreement = implementation.clone();
-
-        emit AgreementDeployed(agreement, msg.sender, docUri, docHash);
-
-        // Initialize the clone with msg.sender as owner
-        AgreementEngine(agreement).initialize(
-            msg.sender,
-            docUri,
-            docHash,
-            initialState,
-            inputDefs_,
-            transitions_,
-            initVars_,
-            verifiers_,
-            actions_
+        // The clone is initialized with msg.sender as owner
+        bytes memory initCall = abi.encodeCall(
+            AgreementEngine.initialize,
+            (msg.sender, docUri, docHash, initialState, inputDefs_, transitions_, initVars_, verifiers_, actions_)
         );
 
+        // Deploy minimal proxy clone (~45k gas)
+        agreement = implementation.clone();
+        _announceAndInitialize(agreement, msg.sender, false, docUri, docHash, initCall);
     }
 
     /**
@@ -149,28 +149,26 @@ contract AgreementFactory is ReentrancyGuard, EIP712 {
         AgreementEngine.VerifierInit[] calldata verifiers_,
         AgreementEngine.ActionInit[] calldata actions_
     ) external nonReentrant returns (address agreement) {
+        bytes32 cloneSalt = _cloneSalt(
+            msg.sender,
+            salt,
+            _agreementDigest(
+                _contentHashes(docUri, inputDefs_, transitions_, initVars_, verifiers_, actions_),
+                docHash,
+                initialState
+            )
+        );
+
+        // The clone is initialized with msg.sender as owner
+        bytes memory initCall = abi.encodeCall(
+            AgreementEngine.initialize,
+            (msg.sender, docUri, docHash, initialState, inputDefs_, transitions_, initVars_, verifiers_, actions_)
+        );
+
         // Deploy minimal proxy clone at the deterministic address reserved for
         // this caller, salt and agreement
-        ContentHashes memory h = _contentHashes(docUri, inputDefs_, transitions_, initVars_, verifiers_, actions_);
-        agreement = implementation.cloneDeterministic(
-            _cloneSalt(msg.sender, salt, _agreementDigest(h, docHash, initialState))
-        );
-
-        emit AgreementDeployed(agreement, msg.sender, docUri, docHash);
-
-        // Initialize the clone with msg.sender as owner
-        AgreementEngine(agreement).initialize(
-            msg.sender,
-            docUri,
-            docHash,
-            initialState,
-            inputDefs_,
-            transitions_,
-            initVars_,
-            verifiers_,
-            actions_
-        );
-
+        agreement = implementation.cloneDeterministic(cloneSalt);
+        _announceAndInitialize(agreement, msg.sender, false, docUri, docHash, initCall);
     }
 
     /**
@@ -210,58 +208,37 @@ contract AgreementFactory is ReentrancyGuard, EIP712 {
             revert PermitExpired(deadline);
         }
 
+        // Hash the variable-length parts once to keep the signed struct manageable
+        ContentHashes memory h = _contentHashes(docUri, inputDefs_, transitions_, initVars_, verifiers_, actions_);
+
+        // The clone is initialized with signer as owner (not msg.sender)
+        bytes memory initCall = abi.encodeCall(
+            AgreementEngine.initialize,
+            (signer, docUri, docHash, initialState, inputDefs_, transitions_, initVars_, verifiers_, actions_)
+        );
+
         // Verify signature
-        uint256 currentNonce = nonces[signer];
-
-        // Compute hashes for arrays to keep typehash manageable
-        bytes32 inputDefsHash = keccak256(abi.encode(inputDefs_));
-        bytes32 transitionsHash = keccak256(abi.encode(transitions_));
-        bytes32 initVarsHash = keccak256(abi.encode(initVars_));
-        bytes32 verifiersHash = keccak256(abi.encode(verifiers_));
-        bytes32 actionsHash = keccak256(abi.encode(actions_));
-
         bytes32 structHash = keccak256(
             abi.encode(
                 PERMIT_WITH_ACTIONS_TYPEHASH,
                 signer,
-                keccak256(bytes(docUri)),
+                h.docUriHash,
                 docHash,
                 initialState,
-                inputDefsHash,
-                transitionsHash,
-                initVarsHash,
-                verifiersHash,
-                actionsHash,
-                currentNonce,
+                h.inputDefsHash,
+                h.transitionsHash,
+                h.initVarsHash,
+                h.verifiersHash,
+                h.actionsHash,
+                nonces[signer],
                 deadline
             )
         );
-        bytes32 hash = _hashTypedDataV4(structHash);
-        if (!SignatureChecker.isValidSignatureNow(signer, hash, signature)) {
-            revert InvalidSignature();
-        }
-
-        // Increment nonce to prevent replay
-        nonces[signer]++;
+        _usePermit(signer, structHash, signature);
 
         // Deploy minimal proxy clone (~45k gas)
         agreement = implementation.clone();
-
-        emit AgreementDeployed(agreement, signer, docUri, docHash);
-        emit AgreementCreatedWithPermit(agreement, signer, msg.sender);
-
-        // Initialize the clone with signer as owner (not msg.sender)
-        AgreementEngine(agreement).initialize(
-            signer,
-            docUri,
-            docHash,
-            initialState,
-            inputDefs_,
-            transitions_,
-            initVars_,
-            verifiers_,
-            actions_
-        );
+        _announceAndInitialize(agreement, signer, true, docUri, docHash, initCall);
     }
 
     /**
@@ -305,15 +282,19 @@ contract AgreementFactory is ReentrancyGuard, EIP712 {
             revert PermitExpired(deadline);
         }
 
-        // Verify signature
-        uint256 currentNonce = nonces[signer];
-
         // Hash each part once: the same hashes feed the signed struct and the
         // digest the clone address is derived from
         ContentHashes memory h = _contentHashes(docUri, inputDefs_, transitions_, initVars_, verifiers_, actions_);
-        bytes32 cloneSalt = _cloneSalt(signer, salt, _agreementDigest(h, docHash, initialState));
-        address predictedAgreement = implementation.predictDeterministicAddress(cloneSalt, address(this));
 
+        // The clone is initialized with signer as owner (not msg.sender)
+        bytes memory initCall = abi.encodeCall(
+            AgreementEngine.initialize,
+            (signer, docUri, docHash, initialState, inputDefs_, transitions_, initVars_, verifiers_, actions_)
+        );
+
+        bytes32 cloneSalt = _cloneSalt(signer, salt, _agreementDigest(h, docHash, initialState));
+
+        // Verify signature
         bytes32 structHash = keccak256(
             abi.encode(
                 DETERMINISTIC_PERMIT_WITH_ACTIONS_TYPEHASH,
@@ -327,38 +308,17 @@ contract AgreementFactory is ReentrancyGuard, EIP712 {
                 h.verifiersHash,
                 h.actionsHash,
                 salt,
-                predictedAgreement,
-                currentNonce,
+                implementation.predictDeterministicAddress(cloneSalt, address(this)),
+                nonces[signer],
                 deadline
             )
         );
-        bytes32 hash = _hashTypedDataV4(structHash);
-        if (!SignatureChecker.isValidSignatureNow(signer, hash, signature)) {
-            revert InvalidSignature();
-        }
-
-        // Increment nonce to prevent replay
-        nonces[signer]++;
+        _usePermit(signer, structHash, signature);
 
         // Deploy minimal proxy clone at the deterministic address reserved for
         // this signer, salt and agreement
         agreement = implementation.cloneDeterministic(cloneSalt);
-
-        emit AgreementDeployed(agreement, signer, docUri, docHash);
-        emit AgreementCreatedWithPermit(agreement, signer, msg.sender);
-
-        // Initialize the clone with signer as owner (not msg.sender)
-        AgreementEngine(agreement).initialize(
-            signer,
-            docUri,
-            docHash,
-            initialState,
-            inputDefs_,
-            transitions_,
-            initVars_,
-            verifiers_,
-            actions_
-        );
+        _announceAndInitialize(agreement, signer, true, docUri, docHash, initCall);
     }
 
     /**
@@ -405,6 +365,32 @@ contract AgreementFactory is ReentrancyGuard, EIP712 {
             _cloneSalt(creator, salt, agreementDigest_),
             address(this)
         );
+    }
+
+    /// @dev Emits the creation events for a freshly deployed clone, then initializes
+    ///      it with the prepared `initialize` call. A revert inside `initialize` is
+    ///      passed on unchanged.
+    function _announceAndInitialize(
+        address agreement,
+        address owner_,
+        bool withPermit,
+        string calldata docUri,
+        bytes32 docHash,
+        bytes memory initCall
+    ) private {
+        emit AgreementDeployed(agreement, owner_, docUri, docHash);
+        if (withPermit) emit AgreementCreatedWithPermit(agreement, owner_, msg.sender);
+
+        Address.functionCall(agreement, initCall);
+    }
+
+    /// @dev Checks `signature` against the permit struct `signer` is expected to have
+    ///      signed, then consumes the signer's nonce so the permit cannot be replayed.
+    function _usePermit(address signer, bytes32 structHash, bytes calldata signature) private {
+        if (!SignatureChecker.isValidSignatureNow(signer, _hashTypedDataV4(structHash), signature)) {
+            revert InvalidSignature();
+        }
+        nonces[signer]++;
     }
 
     /// @dev Hashes of the variable-length parts of an agreement's contents.

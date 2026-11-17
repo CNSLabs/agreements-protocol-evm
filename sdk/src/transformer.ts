@@ -511,6 +511,15 @@ export function transformActions(
       throw new Error(`Unsupported action call type: ${(a.call as any).type}`);
     }
 
+    // The contracts cannot hold ETH, and V1.1 refuses to create an agreement
+    // whose action forwards any.
+    if (BigInt(a.call.value ?? "0") !== 0n) {
+      throw new Error(
+        `Action '${a.id}' forwards ETH (value ${a.call.value}), which agreements cannot do: ` +
+        `set its value to "0" or leave it out`
+      );
+    }
+
     const abi = a.call.abi as any[];
     const fn = abi.find((x) => x && x.type === "function" && x.name === a.call.method);
     if (!fn) {

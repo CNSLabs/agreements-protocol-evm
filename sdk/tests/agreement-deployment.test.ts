@@ -23,6 +23,7 @@ import {
   inputToBytes32,
   getRequiredInitVars,
   buildInitVars,
+  transformActions,
 } from "../src/transformer";
 import { AgreementJson, FieldType, Op } from "../src/types";
 import { AgreementFactoryABI } from "../src/generated/AgreementFactoryAbi.js";
@@ -781,6 +782,33 @@ describe("Agreement Deployment from JSON", () => {
             "data" in a
         )
       ).toBe(true);
+    });
+  });
+
+  describe("transformActions", () => {
+    const action = (value?: string) => ({
+      id: "notify",
+      when: { from: "PENDING", input: "sign" },
+      call: {
+        type: "evmCall" as const,
+        target: "0x1111111111111111111111111111111111111111",
+        ...(value === undefined ? {} : { value }),
+        abi: [{ type: "function", name: "ping", stateMutability: "nonpayable", inputs: [], outputs: [] }],
+        method: "ping",
+        args: [],
+      },
+    });
+
+    it("refuses an action that forwards ETH", () => {
+      expect(() => transformActions([action("1")] as any, grantSimpleJson, {})).toThrow(/forwards ETH/);
+    });
+
+    it("accepts an action with no value or a zero value", () => {
+      const [unset] = transformActions([action()] as any, grantSimpleJson, {});
+      const [zero] = transformActions([action("0")] as any, grantSimpleJson, {});
+      expect(unset.value).toBe(0n);
+      expect(zero.value).toBe(0n);
+      expect(unset.data).toBe(zero.data);
     });
   });
 

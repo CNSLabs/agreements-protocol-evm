@@ -65,6 +65,27 @@ export const AgreementEngineABI = [
   {
     "inputs": [
       {
+        "internalType": "bytes32",
+        "name": "fromState",
+        "type": "bytes32"
+      },
+      {
+        "internalType": "bytes32",
+        "name": "inputId",
+        "type": "bytes32"
+      },
+      {
+        "internalType": "uint256",
+        "name": "value",
+        "type": "uint256"
+      }
+    ],
+    "name": "ActionValueNotSupported",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
         "internalType": "string",
         "name": "op",
         "type": "string"

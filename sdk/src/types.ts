@@ -301,7 +301,7 @@ export interface ExecutionActionWhen {
 export interface ExecutionActionCallEvmCall {
   type: "evmCall";
   target: string;        // template ref or literal address
-  value?: string;        // stringified uint256 (defaults to "0")
+  value?: string;        // must be "0" or absent: agreements cannot send ETH
   abi: unknown[];        // JSON ABI array (subset is fine)
   method: string;        // function name
   args: string[];        // template refs or literals, coerced by ABI input types
