@@ -37,17 +37,16 @@ contracts. The names exported from the package root are the same as in 0.1.4.
   `AgreementFactory.createDeterministicPermitSignature(walletClient, agreement, salt, deadline, options)`,
   which also binds the salt and the address the agreement will be deployed at.
 
-- **Deterministic addresses belong to their creator and to one agreement.**
-  `AgreementFactory.predictAddress` now takes the creator first and the
-  agreement last: `predictAddress(creator, salt, agreement, options)`. The
-  creator is the caller of `createAgreementDeterministic`, or the signer of a
-  deterministic permit. Pass the agreement and the create options exactly as
-  you will pass them to the create call. The same salt gives a different
-  address for a different creator, and for the same creator with different
-  terms: changing the document, an initial value, an input, a transition, a
-  verifier or an action changes the address. One consequence is that an
-  agreement's terms cannot contain its own predicted address. The addresses
-  differ from those the V1.0 factory derived for the same salt.
+- **Deterministic addresses belong to their creator.**
+  `AgreementFactory.predictAddress` now takes the creator first:
+  `predictAddress(creator, salt)`. The creator is the caller of
+  `createAgreementDeterministic`, or the signer of a deterministic permit. The
+  same salt gives a different address for a different creator, so knowing a
+  salt does not let another account deploy to the address it predicts. The
+  address does not depend on the agreement's terms: a creator can deploy any
+  one agreement at the address of a given salt, so verify a deployed agreement
+  before relying on an address that was only predicted. The addresses differ
+  from those the V1.0 factory derived for the same salt.
 
 - **ABIs regenerated.** `AgreementEngineABI` and `AgreementFactoryABI` describe
   the V1.1 contracts.
@@ -60,10 +59,6 @@ contracts. The names exported from the package root are the same as in 0.1.4.
   account's permit nonce, must be sent by the signer itself, and affects no
   other signer or agreement.
 - `AgreementFactory.createDeterministicPermitSignature`, described above.
-- `AgreementFactory.agreementDigest(agreement, options)` returns the digest of
-  an agreement's contents that the factory binds into its deterministic
-  address (the contract's new `agreementDigest` function). It is computed
-  locally, with no network call.
 
 ### Limits
 

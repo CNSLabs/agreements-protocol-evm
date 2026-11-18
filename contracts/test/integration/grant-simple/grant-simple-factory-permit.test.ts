@@ -118,36 +118,20 @@ describe("AgreementFactory (integration) - creation permits and deterministic ad
 
   describe("deterministic addresses", () => {
     it("predictAddress is scoped to the creator", async () => {
-      const { grantor, other, asGrantor, options } = await setup();
+      const { grantor, other, asGrantor } = await setup();
       const salt = saltFor("scoped-to-creator");
 
-      const forGrantor = await asGrantor.factory.predictAddress(grantor.address, salt, grantSimple, options);
-      const forOther = await asGrantor.factory.predictAddress(other.address, salt, grantSimple, options);
+      const forGrantor = await asGrantor.factory.predictAddress(grantor.address, salt);
+      const forOther = await asGrantor.factory.predictAddress(other.address, salt);
 
       expect(forGrantor).to.not.equal(forOther);
-    });
-
-    it("predictAddress is bound to the agreement's contents", async () => {
-      const { grantor, other, asGrantor, options } = await setup();
-      const salt = saltFor("bound-to-contents");
-
-      const agreed = await asGrantor.factory.predictAddress(grantor.address, salt, grantSimple, options);
-      const otherRecipient = await asGrantor.factory.predictAddress(grantor.address, salt, grantSimple, {
-        initValues: { ...options.initValues, recipientEthAddress: other.address as Address },
-      });
-      const otherDocument = await asGrantor.factory.predictAddress(grantor.address, salt, grantSimple, {
-        ...options,
-        docUri: "ipfs://another-document",
-      });
-
-      expect(new Set([agreed, otherRecipient, otherDocument]).size).to.equal(3);
     });
 
     it("createAgreementDeterministic deploys at the caller's predicted address", async () => {
       const { grantor, other, asGrantor, asOther, options } = await setup();
       const salt = saltFor("direct-deterministic");
 
-      const predicted = await asGrantor.factory.predictAddress(grantor.address, salt, grantSimple, options);
+      const predicted = await asGrantor.factory.predictAddress(grantor.address, salt);
       const { address } = await asGrantor.factory.createAgreementDeterministic(
         grantSimple,
         salt,
@@ -158,7 +142,7 @@ describe("AgreementFactory (integration) - creation permits and deterministic ad
 
       // Another account using the same salt gets its own address, so it can
       // neither take nor block the grantor's.
-      const predictedForOther = await asOther.factory.predictAddress(other.address, salt, grantSimple, options);
+      const predictedForOther = await asOther.factory.predictAddress(other.address, salt);
       const { address: otherAddress } = await asOther.factory.createAgreementDeterministic(
         grantSimple,
         salt,
@@ -166,19 +150,6 @@ describe("AgreementFactory (integration) - creation permits and deterministic ad
       );
       expect(otherAddress).to.equal(predictedForOther);
       expect(otherAddress).to.not.equal(address);
-
-      // The same account and salt with different terms lands at a third address.
-      const otherTerms = {
-        initValues: { ...options.initValues, recipientEthAddress: other.address as Address },
-      };
-      const predictedForOtherTerms = await asGrantor.factory.predictAddress(grantor.address, salt, grantSimple, otherTerms);
-      const { address: otherTermsAddress } = await asGrantor.factory.createAgreementDeterministic(
-        grantSimple,
-        salt,
-        otherTerms
-      );
-      expect(otherTermsAddress).to.equal(predictedForOtherTerms);
-      expect(otherTermsAddress).to.not.equal(address);
     });
   });
 
@@ -197,7 +168,7 @@ describe("AgreementFactory (integration) - creation permits and deterministic ad
       expect(permit.signerAddress).to.equal(grantor.address);
       expect(permit.signature).to.match(/^0x[0-9a-f]{130}$/);
 
-      const predicted = await asRelayer.factory.predictAddress(permit.signerAddress, salt, grantSimple, options);
+      const predicted = await asRelayer.factory.predictAddress(permit.signerAddress, salt);
       const { address } = await asRelayer.factory.createAgreementDeterministicWithPermit(
         permit.signerAddress,
         salt,

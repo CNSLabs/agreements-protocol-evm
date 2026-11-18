@@ -9,7 +9,6 @@ import {
   decodeEventLog,
   encodeAbiParameters,
   keccak256,
-  toHex,
 } from 'viem';
 import { executeTransaction, readContractResult } from "./transactions.js";
 import { withSdkSpan } from "./telemetry.js";
@@ -429,10 +428,15 @@ export class AgreementFactory {
   }
 
   /**
-   * Hash the agreement creation parameters the way the factory does, both for
-   * a permit and for the digest a deterministic address is derived from.
+   * Hash the agreement creation parameters the way the factory does before
+   * it checks a permit.
    */
-  private agreementContent(agreement: AgreementJson, options?: CreateAgreementOptions) {
+  private async permitFields(
+    signerAddress: Hex,
+    agreement: AgreementJson,
+    deadline: number,
+    options?: CreateAgreementOptions,
+  ) {
     const params = transformAgreementToOnChainParams(
       agreement,
       options?.docUri,
@@ -440,64 +444,6 @@ export class AgreementFactory {
     );
     const verifiers = options?.verifiers ?? params.verifiers;
 
-    return {
-      docUri: params.docUri,
-      docHash: params.docHash,
-      initialState: params.initialState,
-      inputDefsHash: this.hashInputDefs(params.inputDefs),
-      transitionsHash: this.hashTransitions(params.transitions),
-      initVarsHash: this.hashInitVars(params.initVars),
-      verifiersHash: this.hashVerifiers(verifiers),
-      actionsHash: this.hashActions(params.actions),
-    };
-  }
-
-  /**
-   * Digest of an agreement's contents, as the factory binds it into the
-   * agreement's deterministic address (`AgreementFactory.agreementDigest`).
-   *
-   * It covers the document URI and hash, the initial state, and the input,
-   * transition, variable, verifier and action definitions. Changing any of
-   * them, including an initial value, changes the digest and so the address.
-   * Pass the same `options` you will pass to the create call.
-   *
-   * @param agreement - The agreement JSON definition
-   * @param options - The create options (docUri, initValues, verifiers)
-   */
-  agreementDigest(agreement: AgreementJson, options?: CreateAgreementOptions): Hex {
-    const content = this.agreementContent(agreement, options);
-    return keccak256(
-      encodeAbiParameters(
-        [
-          { type: "bytes32" },
-          { type: "bytes32" },
-          { type: "bytes32" },
-          { type: "bytes32" },
-          { type: "bytes32" },
-          { type: "bytes32" },
-          { type: "bytes32" },
-          { type: "bytes32" },
-        ],
-        [
-          keccak256(toHex(content.docUri)),
-          content.docHash,
-          content.initialState,
-          content.inputDefsHash,
-          content.transitionsHash,
-          content.initVarsHash,
-          content.verifiersHash,
-          content.actionsHash,
-        ],
-      ),
-    );
-  }
-
-  private async permitFields(
-    signerAddress: Hex,
-    agreement: AgreementJson,
-    deadline: number,
-    options?: CreateAgreementOptions,
-  ) {
     const [nonce, chainId] = await Promise.all([
       this.getNonce(signerAddress),
       this.clients.publicClient.getChainId(),
@@ -512,7 +458,14 @@ export class AgreementFactory {
       } as const,
       agreementFields: {
         signer: signerAddress,
-        ...this.agreementContent(agreement, options),
+        docUri: params.docUri,
+        docHash: params.docHash,
+        initialState: params.initialState,
+        inputDefsHash: this.hashInputDefs(params.inputDefs),
+        transitionsHash: this.hashTransitions(params.transitions),
+        initVarsHash: this.hashInitVars(params.initVars),
+        verifiersHash: this.hashVerifiers(verifiers),
+        actionsHash: this.hashActions(params.actions),
       },
       nonce,
       deadline: BigInt(deadline),
@@ -573,8 +526,8 @@ export class AgreementFactory {
    * deterministic address with `createAgreementDeterministicWithPermit`.
    *
    * In addition to everything `createPermitSignature` binds, the permit binds
-   * the salt and the exact clone address the factory derives for this signer,
-   * salt and agreement (`predictAddress(signerAddress, salt, agreement, options)`).
+   * the salt and the exact clone address the factory derives for this signer
+   * and salt (`predictAddress(signerAddress, salt)`).
    *
    * @param walletClient - viem WalletClient to sign typed data (must be connected to an account)
    * @param agreement - The agreement JSON definition
@@ -600,7 +553,7 @@ export class AgreementFactory {
     const signerAddress = account.address as Hex;
     const [fields, predictedAgreement] = await Promise.all([
       this.permitFields(signerAddress, agreement, deadline, options),
-      this.predictAddress(signerAddress, salt, agreement, options),
+      this.predictAddress(signerAddress, salt),
     ]);
 
     const signature = await walletClient.signTypedData({
@@ -690,9 +643,8 @@ export class AgreementFactory {
   /**
    * Create a new agreement at a deterministic address
    * 
-   * The address is derived from the caller, the salt and the agreement's contents,
-   * so it is the address `predictAddress(callerAddress, salt, agreement, options)`
-   * returns. No other account can deploy to it, and no other agreement can occupy it.
+   * The address is derived from the caller and the salt, so it is the address
+   * `predictAddress(callerAddress, salt)` returns and no other account can deploy to it.
    *
    * @param agreement - The agreement JSON definition
    * @param salt - Salt for deterministic address derivation, scoped to the caller
@@ -773,8 +725,8 @@ export class AgreementFactory {
    * Create a new deterministic agreement using a permit signature.
    *
    * The permit binds the signer, the agreement parameters, the salt and the clone
-   * address the factory derives for that signer, salt and agreement, so the
-   * agreement is deployed at `predictAddress(signer, salt, agreement, options)`.
+   * address the factory derives for that signer and salt, so the agreement is
+   * deployed at `predictAddress(signer, salt)`.
    *
    * @param signer - The address the permit names (an EOA, or an ERC-1271 signer contract)
    * @param salt - The signer's salt (must be the signed value)
@@ -845,16 +797,12 @@ export class AgreementFactory {
   /**
    * Predict the address of a deterministic agreement before deployment
    *
-   * Deterministic addresses are scoped to their creator and to the agreement's
-   * contents: the same salt gives a different address for a different creator,
-   * and for the same creator with different terms. Pass the agreement and the
-   * create options exactly as you will pass them to the create call.
+   * Deterministic addresses are scoped to their creator: the same salt gives
+   * a different address for a different creator.
    * 
    * @param creator The account the address is reserved for: the caller of
    *        `createAgreementDeterministic`, or the signer of a deterministic permit
    * @param salt The creator's salt that will be used for deployment
-   * @param agreement The agreement JSON definition that will be deployed
-   * @param options The create options (docUri, initValues, verifiers)
    * @returns The predicted agreement address
    * 
    * @example
@@ -863,20 +811,15 @@ export class AgreementFactory {
    *   { factoryAddress: "0x..." },
    *   { publicClient, walletClient }
    * );
-   * const predictedAddress = await factory.predictAddress(creatorAddress, "0x1234...", agreement);
+   * const predictedAddress = await factory.predictAddress(creatorAddress, "0x1234...");
    * ```
    */
-  async predictAddress(
-    creator: Hex,
-    salt: Hex,
-    agreement: AgreementJson,
-    options?: CreateAgreementOptions,
-  ): Promise<Hex> {
+  async predictAddress(creator: Hex, salt: Hex): Promise<Hex> {
     return await readContractResult<typeof factoryAbi, 'predictAddress', Hex>(this.clients.publicClient, {
       address: this.config.factoryAddress,
       abi: factoryAbi,
       functionName: 'predictAddress',
-      args: [creator, salt, this.agreementDigest(agreement, options)],
+      args: [creator, salt],
     });
   }
 

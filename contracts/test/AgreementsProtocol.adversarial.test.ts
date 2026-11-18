@@ -63,9 +63,6 @@ const deploymentHashes = (d: Deployment) => ({
 });
 const createArgs = (d: Deployment) =>
   [d.docUri, d.docHash, d.initialState, d.inputDefs, d.transitions, d.initVars, d.verifiers, d.actions] as const;
-// The address the factory reserves for this creator, salt and agreement.
-const predict = async (factory: any, creator: string, salt: string, d: Deployment) =>
-  factory.predictAddress(creator, salt, await factory.agreementDigest(...createArgs(d)));
 
 describe("AgreementsProtocol (adversarial)", function () {
   async function deployProtocol() {
@@ -108,7 +105,7 @@ describe("AgreementsProtocol (adversarial)", function () {
       const { factory } = await deployProtocol();
       const [victim, attacker] = await ethers.getSigners();
       const salt = id("victim-salt");
-      const predicted = await predict(factory, victim.address, salt, empty("victim"));
+      const predicted = await factory.predictAddress(victim.address, salt);
 
       // The attacker front-runs with the same salt and its own agreement.
       const attackerAddress = await factory
@@ -117,7 +114,7 @@ describe("AgreementsProtocol (adversarial)", function () {
       await factory.connect(attacker).createAgreementDeterministic(salt, ...createArgs(empty("attacker")));
 
       expect(attackerAddress).to.not.equal(predicted);
-      expect(attackerAddress).to.equal(await predict(factory, attacker.address, salt, empty("attacker")));
+      expect(attackerAddress).to.equal(await factory.predictAddress(attacker.address, salt));
       expect(await ethers.provider.getCode(predicted)).to.equal("0x");
 
       // The victim still gets the address it predicted, as owner.
@@ -132,7 +129,7 @@ describe("AgreementsProtocol (adversarial)", function () {
       const [signer, attacker, relayer] = await ethers.getSigners();
       const salt = id("signed-salt");
       const deployment = empty("signed");
-      const predicted = await predict(factory, signer.address, salt, deployment);
+      const predicted = await factory.predictAddress(signer.address, salt);
       const signature = await signer.signTypedData(
         factoryDomain,
         {
@@ -168,84 +165,22 @@ describe("AgreementsProtocol (adversarial)", function () {
       expect(await (await ethers.getContractAt("AgreementEngine", predicted)).owner()).to.equal(signer.address);
     });
 
-    it("the same agreement cannot be deployed twice under one creator and salt", async function () {
+    it("a creator's own salt still cannot be used twice", async function () {
       const { factory } = await deployProtocol();
       const [creator] = await ethers.getSigners();
       const salt = id("once");
       await factory.connect(creator).createAgreementDeterministic(salt, ...createArgs(empty("first")));
       await expect(
-        factory.connect(creator).createAgreementDeterministic(salt, ...createArgs(empty("first")))
+        factory.connect(creator).createAgreementDeterministic(salt, ...createArgs(empty("second")))
       ).to.be.reverted;
-    });
-  });
-
-  describe("deterministic addresses are bound to the agreement's contents", function () {
-    const withInput = (d: Deployment): Deployment => ({
-      ...d,
-      inputDefs: [{ id: id("sign"), fields: [], conditions: [], verifierKeys: [] }],
-      transitions: [{ fromState: d.initialState, toState: id("S1"), inputId: id("sign") }],
-    });
-
-    it("the same creator and salt with different terms gives a different address", async function () {
-      const { factory } = await deployProtocol();
-      const [creator] = await ethers.getSigners();
-      const salt = id("shared-salt");
-      const base = withInput(empty("terms"));
-      const variants: Deployment[] = [
-        base,
-        { ...base, docUri: "ipfs://other-uri" },
-        { ...base, docHash: id("other-document") },
-        { ...base, initialState: id("OTHER") },
-        { ...base, inputDefs: [{ id: id("sign"), fields: [], conditions: [], verifierKeys: [id("k")] }] },
-        { ...base, transitions: [{ fromState: base.initialState, toState: id("S2"), inputId: id("sign") }] },
-        { ...base, initVars: [{ id: id("amount"), fType: 0, data: coder.encode(["uint256"], [1n]) }] },
-        { ...base, verifiers: [{ key: id("k"), verifier: creator.address }] },
-        {
-          ...base,
-          actions: [{ fromState: base.initialState, inputId: id("sign"), target: creator.address, value: 0n, data: "0x" }],
-        },
-      ];
-
-      const predicted: string[] = [];
-      for (const variant of variants) {
-        predicted.push(await predict(factory, creator.address, salt, variant));
-      }
-      expect(new Set(predicted).size).to.equal(variants.length);
-
-      // Two of them deploy side by side under the one salt, each where predicted.
-      for (const index of [0, 2]) {
-        await expect(factory.connect(creator).createAgreementDeterministic(salt, ...createArgs(variants[index])))
-          .to.emit(factory, "AgreementDeployed")
-          .withArgs(predicted[index], creator.address, variants[index].docUri, variants[index].docHash);
-      }
-    });
-
-    it("an address predicted for one agreement cannot be occupied by another, even by its own creator", async function () {
-      const { factory } = await deployProtocol();
-      const [creator] = await ethers.getSigners();
-      const salt = id("reserved");
-      const agreed = withInput(empty("agreed-terms"));
-      const altered = { ...agreed, docHash: id("altered-terms") };
-      const predicted = await predict(factory, creator.address, salt, agreed);
-
-      const alteredAddress = await factory
-        .connect(creator)
-        .createAgreementDeterministic.staticCall(salt, ...createArgs(altered));
-      await factory.connect(creator).createAgreementDeterministic(salt, ...createArgs(altered));
-      expect(alteredAddress).to.not.equal(predicted);
-      expect(await ethers.provider.getCode(predicted)).to.equal("0x");
-
-      await factory.connect(creator).createAgreementDeterministic(salt, ...createArgs(agreed));
-      const deployed = await ethers.getContractAt("AgreementEngine", predicted);
-      expect(await deployed.docHash()).to.equal(agreed.docHash);
     });
 
     it("a deterministic permit deploys only the signed agreement at the signed address", async function () {
       const { factory, factoryDomain, deadline } = await deployProtocol();
       const [signer, relayer] = await ethers.getSigners();
       const salt = id("permit-salt");
-      const agreed = withInput(empty("permit-terms"));
-      const predicted = await predict(factory, signer.address, salt, agreed);
+      const agreed = empty("permit-terms");
+      const predicted = await factory.predictAddress(signer.address, salt);
       const signature = await signer.signTypedData(
         factoryDomain,
         {
@@ -550,7 +485,7 @@ describe("AgreementsProtocol (adversarial)", function () {
           signer: accountA,
           ...deploymentHashes(deployment),
           salt,
-          predictedAgreement: await predict(factory, accountA, salt, deployment),
+          predictedAgreement: await factory.predictAddress(accountA, salt),
           nonce: 0n,
           deadline,
         }
@@ -649,7 +584,7 @@ describe("AgreementsProtocol (adversarial)", function () {
           signer: creator.address,
           ...deploymentHashes(deployment),
           salt,
-          predictedAgreement: await predict(factory, creator.address, salt, deployment),
+          predictedAgreement: await factory.predictAddress(creator.address, salt),
           nonce: 0n,
           deadline,
         }

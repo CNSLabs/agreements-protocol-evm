@@ -37,20 +37,7 @@ describe("AgreementsProtocol", function () {
     const hash = (type: string, value: unknown) =>
       ethers.keccak256(coder.encode([type], [value]));
     const factoryAddress = await factory.getAddress();
-    const predictedAgreement = await factory.predictAddress(
-      signer.address,
-      salt,
-      await factory.agreementDigest(
-        deployment.docUri,
-        deployment.docHash,
-        deployment.initialState,
-        deployment.inputDefs,
-        deployment.transitions,
-        deployment.initVars,
-        deployment.verifiers,
-        deployment.actions
-      )
-    );
+    const predictedAgreement = await factory.predictAddress(signer.address, salt);
     const nonce = await factory.nonces(signer.address);
     const network = await ethers.provider.getNetwork();
 
@@ -465,20 +452,7 @@ describe("AgreementsProtocol", function () {
     expect(await agreement.currentState()).to.equal(completeState);
 
     const salt = ethers.keccak256(ethers.toUtf8Bytes("erc1271-deterministic"));
-    const predictedAgreement = await factory.predictAddress(
-      smartSignerAddress,
-      salt,
-      await factory.agreementDigest(
-        deployment.docUri,
-        deployment.docHash,
-        deployment.initialState,
-        deployment.inputDefs,
-        deployment.transitions,
-        deployment.initVars,
-        deployment.verifiers,
-        deployment.actions
-      )
-    );
+    const predictedAgreement = await factory.predictAddress(smartSignerAddress, salt);
     const deterministicTypes = {
       PermitDeterministicAgreementWithActions: [
         ...factoryTypes.PermitAgreementWithActions.slice(0, 9),
