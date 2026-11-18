@@ -17,11 +17,11 @@ export const DeploymentsRegistry = {
       "deployer": "0x3793901C5eBB531F6CE5cE6E14a900BD3750591b"
     },
     "59141": {
-      "implementation": "0x2F37b0C876445B481C0071093062FE4933d822b9",
-      "factory": "0x59DbbE5Ce30cb4cf7274911B674d3f58bA0593C6",
+      "implementation": "0x04fCDB242A04108Bdc7Decd240327e717eC98F0F",
+      "factory": "0x2a1C808e41585D010c06c346f2Aa4bd8e86ac00F",
       "chainId": "59141",
       "network": "lineaSepolia",
-      "deployedAt": "2026-11-18T03:56:44.172Z",
+      "deployedAt": "2026-11-18T20:01:09.787Z",
       "deployer": "0x3793901C5eBB531F6CE5cE6E14a900BD3750591b",
       "version": "1.1",
       "legacy": {
