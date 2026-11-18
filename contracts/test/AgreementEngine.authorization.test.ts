@@ -188,7 +188,8 @@ describe("AgreementEngine — pre-submission authorization", function () {
             await (await f.prepare(f.authorized, rotation(f.next.address)))();
             expect(await f.agreement.currentState()).to.equal(ACTIVE);
             await expectStored(f.agreement, AUTHORITY, "ADDRESS", f.next.address);
-            expect(await f.agreement.nonces(f.authorized.address)).to.equal(path === "permit" ? 1n : 0n);
+            // An accepted input consumes its author's permit nonce on either path.
+            expect(await f.agreement.nonces(f.authorized.address)).to.equal(1n);
 
             const afterRotation = await f.snapshot();
             const oldSubmit = await f.prepare(f.authorized, rotation(f.authorized.address));
@@ -202,7 +203,7 @@ describe("AgreementEngine — pre-submission authorization", function () {
             await expectStored(f.agreement, AUTHORITY, "ADDRESS", f.next.address);
             await expectStored(f.agreement, AMOUNT, "UINT256", 9n);
             await expectStored(f.agreement, NOTE, "STRING", "original");
-            expect(await f.agreement.nonces(f.next.address)).to.equal(path === "permit" ? 1n : 0n);
+            expect(await f.agreement.nonces(f.next.address)).to.equal(1n);
           });
         });
       }
@@ -329,12 +330,13 @@ describe("AgreementEngine — pre-submission authorization", function () {
           if (f.probe) {
             expect(await f.probe.actionsExecuted()).to.equal(0n);
             await f.probe.setFailures(false, false);
-            // Retrying the same permit proves the failed attempt did not consume its nonce.
+            // Retrying the same submission proves the failed attempt consumed no nonce:
+            // on the permit path the same signature is still accepted.
             await submit();
             expect(await f.probe.actionsExecuted()).to.equal(1n);
             expect(await f.agreement.currentState()).to.equal(ACTIVE);
             await expectStored(f.agreement, AUTHORITY, "ADDRESS", f.next.address);
-            expect(await f.agreement.nonces(f.authorized.address)).to.equal(path === "permit" ? 1n : 0n);
+            expect(await f.agreement.nonces(f.authorized.address)).to.equal(1n);
             expect(await f.agreement.nonces(f.relayer.address)).to.equal(0n);
           }
         });

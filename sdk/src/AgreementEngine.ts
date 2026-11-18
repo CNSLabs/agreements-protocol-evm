@@ -230,6 +230,10 @@ export class AgreementEngine {
 
   /**
    * Submit an input to progress the agreement's state machine
+   *
+   * An accepted input consumes the sender's permit nonce on this agreement, so
+   * an input permit the sender signed earlier and that was not submitted is no
+   * longer accepted. Permits signed by other parties are not affected.
    * 
    * @param agreement - The agreement JSON definition (for field type resolution)
    * @param inputId - The input identifier (e.g., "grantorData")
@@ -347,10 +351,13 @@ export class AgreementEngine {
    * The permit names its signer (the wallet client's account) and carries the
    * signer's current permit nonce on this agreement. It does not name a state:
    * it stays usable until its deadline, in any state that accepts the input,
-   * until it or another permit of the same signer is accepted. Several parties
-   * can sign up front and have their permits submitted in whatever order the
-   * agreement's transitions allow. Because each permit uses the signer's
-   * current nonce, one signer has one live permit per agreement at a time.
+   * until it or another permit of the same signer is accepted, the signer has
+   * an input accepted through `submitInput`, or the signer calls
+   * `cancelPermits`. Another party's input does not affect it, so several
+   * parties can sign up front and have their permits submitted in whatever
+   * order the agreement's transitions allow. Because each permit uses the
+   * signer's current nonce, one signer has one live permit per agreement at a
+   * time.
    * 
    * @param walletClient - viem WalletClient that signs the typed data (must be connected to an account)
    * @param agreement - The agreement JSON definition

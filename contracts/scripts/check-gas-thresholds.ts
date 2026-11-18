@@ -27,7 +27,10 @@ const GAS_THRESHOLDS: GasThresholds = {
   },
   AgreementEngine: {
     submitInput: {
-      max: 220000, // Current max: 169k, threshold: 220k (~30% leeway)
+      // Current average: 229k, threshold: 290k (~27% leeway). V1.1: an accepted
+      // direct input also writes the caller's permit nonce, about 22k the first
+      // time an account submits to an agreement and about 5k after that.
+      max: 290000,
     },
   },
 };

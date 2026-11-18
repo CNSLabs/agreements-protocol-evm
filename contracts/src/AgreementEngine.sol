@@ -173,10 +173,12 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
     // Optional per-transition actions, keyed by (fromState,inputId)
     mapping(bytes32 => mapping(bytes32 => Action)) internal actions;
     
-    // Permit functionality - nonce tracking per signer. Each accepted permit
-    // consumes the signer's current nonce, so a permit is single-use and a signer
-    // has at most one live permit on this agreement at a time. A signer withdraws
-    // an unsubmitted permit with `cancelPermits`.
+    // Permit functionality - nonce tracking per signer. Each accepted input
+    // consumes the current nonce of the account that authorized it: the signer of
+    // a permit, or the caller of `submitInput`. A permit is therefore single-use,
+    // a signer has at most one live permit on this agreement at a time, and an
+    // input the signer submits directly retires the permit it had outstanding.
+    // A signer withdraws an unsubmitted permit with `cancelPermits`.
     mapping(address => uint256) public nonces;
     
     // EIP-712 typehash for permit. The signer binds its own address, so a
@@ -315,6 +317,12 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
      * @notice Submit an input to progress the agreement FSM.
      * @param inputId The logical input identifier.
      * @param payload Encoded DataField[] array.
+     * @dev An accepted input consumes the caller's permit nonce, as an accepted
+     *      permit does for its signer. An input permit the caller signed earlier
+     *      and that was not submitted stops verifying, so it cannot be presented
+     *      later, when the agreement accepts that input again. Only the caller's
+     *      nonce moves: permits signed by other parties stay valid. A reverted
+     *      call consumes nothing.
      */
     function submitInput(
         bytes32 inputId,
@@ -342,13 +350,16 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
         (bool found, bytes32 to) = _findTransition(from, inputId);
         require(found, "No valid transition");
 
-        // 6. Persist only after every authorization check has succeeded.
+        // 6. Retire the caller's outstanding permit (revert will roll this back).
+        nonces[msg.sender]++;
+
+        // 7. Persist only after every authorization check has succeeded.
         _persistFields(def, fields);
 
-        // 7. Update state (action reads may expect updated state; revert will roll this back).
+        // 8. Update state (action reads may expect updated state; revert will roll this back).
         currentState = to;
 
-        // 8. Optional action (atomic with transition)
+        // 9. Optional action (atomic with transition)
         _executeActionIfAny(from, to, inputId);
 
         emit InputAccepted(from, to, inputId, payload);
@@ -366,11 +377,12 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
      *      The signature covers the signer's address, the input, its payload, the signer's
      *      nonce on this agreement and the deadline. It does not name a state: the permit
      *      stays usable until its deadline, in any state that accepts the input, until it
-     *      or another permit of the same signer is accepted, or the signer withdraws it
-     *      with `cancelPermits`. Several parties can therefore
-     *      sign up front and have their permits submitted in whatever order the agreement's
-     *      transitions allow. A payload should restate what the signer approves (a document
-     *      hash, an amount) rather than rely on values stored by earlier inputs.
+     *      or another permit of the same signer is accepted, the signer has an input
+     *      accepted through `submitInput`, or the signer withdraws it with
+     *      `cancelPermits`. Another party's input does not affect it. Several parties can
+     *      therefore sign up front and have their permits submitted in whatever order the
+     *      agreement's transitions allow. A payload should restate what the signer approves
+     *      (a document hash, an amount) rather than rely on values stored by earlier inputs.
      */
     function submitInputWithPermit(
         address signer,
@@ -452,8 +464,9 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
      *      Scope: the caller only, on this agreement only. Each agreement is its own
      *      clone with its own nonces, so other signers and other agreements are
      *      untouched. There is no signed path: a smart account (ERC-1271) cancels by
-     *      calling this from the account itself. `submitInput`, where the caller
-     *      submits directly, does not use the nonce and is unaffected.
+     *      calling this from the account itself. Cancelling does not stop the caller
+     *      from submitting directly: `submitInput` checks no nonce, and consumes the
+     *      caller's nonce when its input is accepted.
      *
      *      One call consumes one nonce. A signer that deliberately signed permits
      *      for later nonces calls once for each.

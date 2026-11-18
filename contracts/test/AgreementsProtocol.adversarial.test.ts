@@ -358,6 +358,101 @@ describe("AgreementsProtocol (adversarial)", function () {
       ).to.be.revertedWithCustomError(implementation, "InvalidSignature");
     });
 
+    it("an acceptance permit left unused cannot be presented after its signer rejects directly and the work comes back", async function () {
+      const { factory, implementation, engineDomain, deadline } = await deployProtocol();
+      const [reviewer, worker, holder] = await ethers.getSigners();
+      const [IN_REVIEW, REWORK, ACCEPTED] = [id("IN_REVIEW"), id("REWORK"), id("ACCEPTED")];
+      const [accept, reject, resubmit] = [id("accept"), id("reject"), id("resubmit")];
+      const issuer = (partyVar: string) => ({ op: 16, fieldId: id(partyVar), bytesArg: "0x" });
+      const input = (inputId: string, partyVar: string) =>
+        ({ id: inputId, fields: [], conditions: [issuer(partyVar)], verifierKeys: [] });
+      const party = (name: string, account: string) =>
+        ({ id: id(name), fType: 2, data: coder.encode(["address"], [account]) });
+      const deployment: Deployment = {
+        ...empty("review-cycle"),
+        initialState: IN_REVIEW,
+        inputDefs: [input(accept, "reviewer"), input(reject, "reviewer"), input(resubmit, "worker")],
+        initVars: [party("reviewer", reviewer.address), party("worker", worker.address)],
+        transitions: [
+          { fromState: IN_REVIEW, toState: ACCEPTED, inputId: accept },
+          { fromState: IN_REVIEW, toState: REWORK, inputId: reject },
+          { fromState: REWORK, toState: IN_REVIEW, inputId: resubmit },
+        ],
+      };
+      const address = await factory.createAgreement.staticCall(...createArgs(deployment));
+      await factory.createAgreement(...createArgs(deployment));
+      const agreement: any = await ethers.getContractAt("AgreementEngine", address);
+      const domain = engineDomain(address);
+
+      // The reviewer signs an acceptance. Nobody submits it.
+      const oldAcceptance = await signInput(reviewer, domain, accept, emptyPayload, 0n, deadline);
+
+      // The reviewer changes their mind and rejects on chain, and the work is resubmitted.
+      await agreement.connect(reviewer).submitInput(reject, emptyPayload);
+      expect(await agreement.nonces(reviewer.address)).to.equal(1n);
+      await agreement.connect(worker).submitInput(resubmit, emptyPayload);
+      expect(await agreement.currentState()).to.equal(IN_REVIEW);
+
+      // Before the fix the old acceptance was still good here and accepted the new submission.
+      await expect(
+        agreement.connect(holder).submitInputWithPermit(reviewer.address, accept, emptyPayload, deadline, oldAcceptance)
+      ).to.be.revertedWithCustomError(implementation, "InvalidSignature");
+      expect(await agreement.currentState()).to.equal(IN_REVIEW);
+
+      // An acceptance signed for the new submission carries the reviewer's new nonce.
+      const newAcceptance = await signInput(reviewer, domain, accept, emptyPayload, 1n, deadline);
+      await agreement.connect(holder).submitInputWithPermit(reviewer.address, accept, emptyPayload, deadline, newAcceptance);
+      expect(await agreement.currentState()).to.equal(ACCEPTED);
+      expect(await agreement.nonces(reviewer.address)).to.equal(2n);
+    });
+
+    it("one party's direct input retires its own unused permit and leaves the other party's valid", async function () {
+      const { factory, implementation, engineDomain, deadline } = await deployProtocol();
+      const [partyA, partyB, relayer] = await ethers.getSigners();
+      const agreement = await deployTwoSigner(factory, partyA.address, partyB.address);
+      const domain = engineDomain(await agreement.getAddress());
+      const payloadA = hashPayload(id("aHash"), id("the pinned document"));
+      const payloadB = hashPayload(id("bHash"), id("the pinned document"));
+
+      // Both sign before anything is submitted.
+      const permitA = await signInput(partyA, domain, signA, payloadA, 0n, deadline);
+      const permitB = await signInput(partyB, domain, signB, payloadB, 0n, deadline);
+
+      // Party A then submits its own input directly.
+      await agreement.connect(partyA).submitInput(signA, payloadA);
+      expect(await agreement.currentState()).to.equal(A_SIGNED);
+      expect(await agreement.nonces(partyA.address)).to.equal(1n);
+      expect(await agreement.nonces(partyB.address)).to.equal(0n);
+      expect(await agreement.nonces(relayer.address)).to.equal(0n);
+
+      // Party A's own unused permit is gone.
+      await expect(
+        agreement.connect(relayer).submitInputWithPermit(partyA.address, signA, payloadA, deadline, permitA)
+      ).to.be.revertedWithCustomError(implementation, "InvalidSignature");
+
+      // Party B's permit, signed up front, is still accepted.
+      await agreement.connect(relayer).submitInputWithPermit(partyB.address, signB, payloadB, deadline, permitB);
+      expect(await agreement.currentState()).to.equal(SIGNED);
+      expect(await agreement.nonces(partyB.address)).to.equal(1n);
+    });
+
+    it("a direct input that is refused leaves the caller's permit usable", async function () {
+      const { factory, implementation, engineDomain, deadline } = await deployProtocol();
+      const [partyA, partyB, relayer] = await ethers.getSigners();
+      const agreement = await deployTwoSigner(factory, partyA.address, partyB.address);
+      const payloadA = hashPayload(id("aHash"), id("the pinned document"));
+      const payloadB = hashPayload(id("bHash"), id("the pinned document"));
+      const permitA = await signInput(partyA, engineDomain(await agreement.getAddress()), signA, payloadA, 0n, deadline);
+
+      // Party A tries to submit party B's input: refused, and nothing is consumed.
+      await expect(agreement.connect(partyA).submitInput(signB, payloadB))
+        .to.be.revertedWithCustomError(implementation, "SenderAddressMismatch");
+      expect(await agreement.nonces(partyA.address)).to.equal(0n);
+
+      await agreement.connect(relayer).submitInputWithPermit(partyA.address, signA, payloadA, deadline, permitA);
+      expect(await agreement.currentState()).to.equal(A_SIGNED);
+    });
+
     it("a signer cancels an unsubmitted permit, and only its own", async function () {
       const { factory, implementation, engineDomain, deadline } = await deployProtocol();
       const [partyA, partyB, relayer] = await ethers.getSigners();

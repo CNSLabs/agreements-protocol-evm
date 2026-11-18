@@ -31,6 +31,16 @@ contracts. The names exported from the package root are the same as in 0.1.4.
   A permit that has not been submitted stays usable until its deadline, so
   keep deadlines short, or withdraw it with `cancelPermits` (below).
 
+- **A direct input retires the sender's outstanding input permit.** In V1.1 an
+  input accepted through `submitInput` consumes the sender's permit nonce on
+  that agreement, as an accepted permit does. An input permit the sender signed
+  earlier and that was not submitted is then refused (`InvalidSignature`); sign
+  again with `createPermitSignature`, which reads the new nonce. Under V1.0 the
+  earlier permit stayed valid and could be submitted the next time the
+  agreement accepted its input. Permits signed by other parties are not
+  affected. The first direct input an account sends to an agreement costs about
+  22,000 more gas than under V1.0, and later ones about 5,000 more.
+
 - **Deterministic creation has its own permit.** A signature from
   `AgreementFactory.createPermitSignature` is no longer accepted by
   `createAgreementDeterministicWithPermit`. Sign with the new

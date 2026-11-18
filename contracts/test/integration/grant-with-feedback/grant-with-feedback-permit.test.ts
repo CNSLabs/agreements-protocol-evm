@@ -577,7 +577,7 @@ describe("AgreementEngine (integration) - grant-with-feedback FSM with Permits",
       }
     });
 
-    it("accepts a permit signed up front once the agreement reaches a state that takes its input", async () => {
+    it("retires a permit signed up front when its signer then submits an input directly", async () => {
       const [grantor, recipient] = await ethers.getSigners();
       const { factory: deployedFactory } = await deployProtocol();
       const factoryAddress = await deployedFactory.getAddress();
@@ -621,26 +621,18 @@ describe("AgreementEngine (integration) - grant-with-feedback FSM with Permits",
         deadline
       );
 
-      // Both parties sign directly, so the recipient's permit nonce is untouched.
+      // Both parties sign directly. An accepted direct input consumes its
+      // sender's permit nonce, and only its sender's.
       await agreementAsRecipient.submitInput(grantWithFeedback, "recipientSigning", sampleInputs.recipientSigning);
+      expect(await agreement.getNonce(recipient.address as `0x${string}`)).to.equal(1n);
+      const grantorNonce = await agreement.getNonce(grantor.address as `0x${string}`);
       await agreement.submitInput(grantWithFeedback, "grantorSigning", sampleInputs.grantorSigning);
       expect(await agreement.getCurrentState(grantWithFeedback)).to.equal("AWAITING_WORK_SUBMISSION");
-      expect(await agreement.getNonce(recipient.address as `0x${string}`)).to.equal(0n);
-
-      // The agreement now accepts workSubmission, and the early permit is still
-      // good: it names the input and its payload, not a state.
-      await agreement.submitInputWithPermit(
-        earlyPermit.signerAddress,
-        grantWithFeedback,
-        "workSubmission",
-        sampleInputs.workSubmission,
-        deadline,
-        earlyPermit.signature
-      );
-      expect(await agreement.getCurrentState(grantWithFeedback)).to.equal("WORK_IN_REVIEW");
       expect(await agreement.getNonce(recipient.address as `0x${string}`)).to.equal(1n);
+      expect(await agreement.getNonce(grantor.address as `0x${string}`)).to.equal(grantorNonce + 1n);
 
-      // It is single-use: the recipient's nonce has moved on.
+      // The agreement now accepts workSubmission, but the early permit was
+      // retired by the recipient's own direct input.
       try {
         await agreement.submitInputWithPermit(
           earlyPermit.signerAddress,
@@ -649,6 +641,41 @@ describe("AgreementEngine (integration) - grant-with-feedback FSM with Permits",
           sampleInputs.workSubmission,
           deadline,
           earlyPermit.signature
+        );
+        expect.fail("Expected transaction to revert with InvalidSignature");
+      } catch (error: any) {
+        expect(error.message).to.include("InvalidSignature");
+      }
+      expect(await agreement.getCurrentState(grantWithFeedback)).to.equal("AWAITING_WORK_SUBMISSION");
+
+      // A permit signed now reads the recipient's new nonce and is accepted.
+      const freshPermit = await createRecipientPermit(
+        agreementAddress,
+        recipient,
+        "workSubmission",
+        sampleInputs.workSubmission,
+        deadline
+      );
+      await agreement.submitInputWithPermit(
+        freshPermit.signerAddress,
+        grantWithFeedback,
+        "workSubmission",
+        sampleInputs.workSubmission,
+        deadline,
+        freshPermit.signature
+      );
+      expect(await agreement.getCurrentState(grantWithFeedback)).to.equal("WORK_IN_REVIEW");
+      expect(await agreement.getNonce(recipient.address as `0x${string}`)).to.equal(2n);
+
+      // It is single-use: the recipient's nonce has moved on.
+      try {
+        await agreement.submitInputWithPermit(
+          freshPermit.signerAddress,
+          grantWithFeedback,
+          "workSubmission",
+          sampleInputs.workSubmission,
+          deadline,
+          freshPermit.signature
         );
         expect.fail("Expected transaction to revert with InvalidSignature");
       } catch (error: any) {
@@ -686,9 +713,11 @@ describe("AgreementEngine (integration) - grant-with-feedback FSM with Permits",
         sampleInputs.recipientSigning,
         deadline
       );
+      const grantorNonce = await agreement.getNonce(grantor.address as `0x${string}`);
       await agreementAsRecipient.cancelPermits(true);
       expect(await agreement.getNonce(recipient.address as `0x${string}`)).to.equal(1n);
-      expect(await agreement.getNonce(grantor.address as `0x${string}`)).to.equal(0n);
+      // The recipient's cancellation does not move the grantor's nonce.
+      expect(await agreement.getNonce(grantor.address as `0x${string}`)).to.equal(grantorNonce);
 
       try {
         await agreement.submitInputWithPermit(
