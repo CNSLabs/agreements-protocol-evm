@@ -453,6 +453,114 @@ describe("AgreementsProtocol (adversarial)", function () {
       expect(await agreement.currentState()).to.equal(A_SIGNED);
     });
 
+    // A permit does not name the agreement's state, and another party's input does not
+    // retire it. Where one reviewer can send work back and another has signed an approval,
+    // the agreement itself has to tie the approval to what was reviewed: the approval
+    // carries the report's hash and a condition compares it with the stored one.
+    for (const bound of [true, false]) {
+      const title = bound
+        ? "an approval that names the report's hash is refused once another reviewer returns the report and it is revised"
+        : "without that condition the same unused approval is accepted for the revised report";
+      it(title, async function () {
+        const { factory, implementation, engineDomain, deadline } = await deployProtocol();
+        const [author, reviewer, secondReviewer, holder] = await ethers.getSigners();
+        const [DRAFTING, IN_REVIEW, APPROVED] = [id("DRAFTING"), id("IN_REVIEW"), id("APPROVED")];
+        const [submitReport, returnReport, approveReport] = [id("submitReport"), id("returnReport"), id("approveReport")];
+        const [reportHash, approvedReportHash] = [id("reportHash"), id("approvedReportHash")];
+        const party = (name: string, account: string) =>
+          ({ id: id(name), fType: 2, data: coder.encode(["address"], [account]) });
+        // SENDER_IN_ALLOWED_ADDRESSES: either reviewer
+        const eitherReviewer = {
+          op: 17,
+          fieldId: ethers.ZeroHash,
+          bytesArg: coder.encode(["bytes32[]", "address[]"], [[id("reviewer"), id("secondReviewer")], []]),
+        };
+        // STRING_EQ_VAR: the submitted field must equal the stored report hash
+        const namesStoredReport = { op: 3, fieldId: approvedReportHash, bytesArg: coder.encode(["bytes32"], [reportHash]) };
+        const textPayload = (fieldId: string, value: string) =>
+          coder.encode(
+            ["tuple(bytes32 id,uint8 fType,bytes data)[]"],
+            [[{ id: fieldId, fType: 1, data: coder.encode(["string"], [value]) }]]
+          );
+        const deployment: Deployment = {
+          ...empty(`report-review-${bound}`),
+          initialState: DRAFTING,
+          inputDefs: [
+            {
+              id: submitReport,
+              fields: [{ fieldId: reportHash, fType: 1, required: true, persist: true }],
+              conditions: [{ op: 16, fieldId: id("author"), bytesArg: "0x" }],
+              verifierKeys: [],
+            },
+            { id: returnReport, fields: [], conditions: [eitherReviewer], verifierKeys: [] },
+            {
+              id: approveReport,
+              fields: [{ fieldId: approvedReportHash, fType: 1, required: true, persist: false }],
+              conditions: bound ? [eitherReviewer, namesStoredReport] : [eitherReviewer],
+              verifierKeys: [],
+            },
+          ],
+          initVars: [
+            party("author", author.address),
+            party("reviewer", reviewer.address),
+            party("secondReviewer", secondReviewer.address),
+          ],
+          transitions: [
+            { fromState: DRAFTING, toState: IN_REVIEW, inputId: submitReport },
+            { fromState: IN_REVIEW, toState: DRAFTING, inputId: returnReport },
+            { fromState: IN_REVIEW, toState: APPROVED, inputId: approveReport },
+          ],
+        };
+        const address = await factory.createAgreement.staticCall(...createArgs(deployment));
+        await factory.createAgreement(...createArgs(deployment));
+        const agreement: any = await ethers.getContractAt("AgreementEngine", address);
+        const domain = engineDomain(address);
+        const [version1, version2] = [id("report, version 1"), id("report, version 2")];
+
+        // Version 1 is submitted. One reviewer signs an approval of it that nobody submits.
+        await agreement.connect(author).submitInput(submitReport, textPayload(reportHash, version1));
+        const approvalOfVersion1 = textPayload(approvedReportHash, version1);
+        const oldApproval = await signInput(reviewer, domain, approveReport, approvalOfVersion1, 0n, deadline);
+
+        // The other reviewer returns the report, and version 2 comes in.
+        await agreement.connect(secondReviewer).submitInput(returnReport, emptyPayload);
+        await agreement.connect(author).submitInput(submitReport, textPayload(reportHash, version2));
+        expect(await agreement.currentState()).to.equal(IN_REVIEW);
+        // The first reviewer's nonce has not moved: the permit itself is still good.
+        expect(await agreement.nonces(reviewer.address)).to.equal(0n);
+
+        const presentOldApproval = () =>
+          agreement
+            .connect(holder)
+            .submitInputWithPermit(reviewer.address, approveReport, approvalOfVersion1, deadline, oldApproval);
+
+        if (!bound) {
+          // Nothing ties the approval to version 1, so it approves version 2.
+          await presentOldApproval();
+          expect(await agreement.currentState()).to.equal(APPROVED);
+          return;
+        }
+
+        await expect(presentOldApproval())
+          .to.be.revertedWithCustomError(implementation, "ComparisonFailed")
+          .withArgs("STRING_EQ_VAR", "STRING");
+        // The same holds for an approval sent directly.
+        await expect(agreement.connect(reviewer).submitInput(approveReport, approvalOfVersion1))
+          .to.be.revertedWithCustomError(implementation, "ComparisonFailed")
+          .withArgs("STRING_EQ_VAR", "STRING");
+        expect(await agreement.currentState()).to.equal(IN_REVIEW);
+        expect(await agreement.nonces(reviewer.address)).to.equal(0n);
+
+        // An approval of version 2 is accepted.
+        const approvalOfVersion2 = textPayload(approvedReportHash, version2);
+        const newApproval = await signInput(reviewer, domain, approveReport, approvalOfVersion2, 0n, deadline);
+        await agreement
+          .connect(holder)
+          .submitInputWithPermit(reviewer.address, approveReport, approvalOfVersion2, deadline, newApproval);
+        expect(await agreement.currentState()).to.equal(APPROVED);
+      });
+    }
+
     it("a signer cancels an unsubmitted permit, and only its own", async function () {
       const { factory, implementation, engineDomain, deadline } = await deployProtocol();
       const [partyA, partyB, relayer] = await ethers.getSigners();
