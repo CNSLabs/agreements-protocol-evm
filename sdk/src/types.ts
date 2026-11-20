@@ -261,6 +261,25 @@ export interface InitializeConfig {
 }
 
 /**
+ * When an input may be submitted. The contract compares the block time with
+ * each bound when the input is submitted, directly or by permit.
+ *
+ * A bound is either a fixed moment or a stored date:
+ * - a fixed moment is a whole number of seconds since 1970-01-01 UTC (a number
+ *   or a string of digits), or an ISO 8601 date-time with an explicit zone,
+ *   such as "2027-03-01T00:00:00Z";
+ * - a stored date is "${variables.name}", where the variable has type
+ *   `uint256`, holds seconds since 1970-01-01 UTC, and is listed in
+ *   `execution.initialize.data` so that the agreement stores it at creation.
+ */
+export interface InputTimeWindow {
+  /** The input is accepted at this moment and after it. */
+  notBefore?: string | number;
+  /** The input is accepted only before this moment. */
+  before?: string | number;
+}
+
+/**
  * Input definition in execution
  */
 export interface ExecutionInput {
@@ -270,6 +289,8 @@ export interface ExecutionInput {
   description?: string;
   data?: Record<string, string | ExecutionInputFieldDefinition>;
   issuer?: string | string[];
+  /** Limits when the input is accepted. Requires the V1.1 contracts. */
+  time?: InputTimeWindow;
 }
 
 /**
@@ -301,7 +322,7 @@ export interface ExecutionActionWhen {
 export interface ExecutionActionCallEvmCall {
   type: "evmCall";
   target: string;        // template ref or literal address
-  value?: string;        // stringified uint256 (defaults to "0")
+  value?: string;        // must be "0" or absent: agreements cannot send ETH
   abi: unknown[];        // JSON ABI array (subset is fine)
   method: string;        // function name
   args: string[];        // template refs or literals, coerced by ABI input types

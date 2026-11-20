@@ -14,6 +14,17 @@ export interface DeploymentInfo {
   network: string;
   deployedAt: string;
   deployer: string;
+  /** Contract version of this deployment, where recorded ("1.1"). Absent on V1.0 records. */
+  version?: string;
+  /** The V1.0 deployment this one replaced, kept so old agreements stay findable. */
+  legacy?: {
+    version: string;
+    implementation: string;
+    factory: string;
+    deployedAt: string;
+    deployer: string;
+    deprecated: boolean;
+  };
 }
 
 export interface DeploymentsRegistry {

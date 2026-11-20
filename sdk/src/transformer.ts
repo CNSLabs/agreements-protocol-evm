@@ -24,11 +24,19 @@ import {
   InputFieldMetadata,
   type ExecutionAction,
   type ActionInit,
+  type InputTimeWindow,
 } from "./types.js";
 import { encodeFieldValue } from "./payload-builder.js";
 
 const ZERO_BYTES32 =
   "0x0000000000000000000000000000000000000000000000000000000000000000" as Hex;
+
+/**
+ * The field name the V1.1 engine reserves for the block time. A condition on
+ * this field compares `block.timestamp` instead of a submitted value, and the
+ * engine refuses an agreement that declares a field or stored variable with it.
+ */
+const BLOCK_TIME_FIELD_NAME = "block.timestamp";
 
 /**
  * Supported value types for initialization variables
@@ -95,7 +103,12 @@ export function transformAgreementToOnChainParams(
   const initVars = buildInitVars(requiredInitVars, initValues || {});
 
   // 6. Transform inputs to InputDefs (all inputs treated uniformly now)
-  const inputDefs = transformInputs(execution.inputs, agreement.variables);
+  const inputDefs = transformInputs(
+    execution.inputs,
+    agreement.variables,
+    requiredInitVars.map((v) => v.name)
+  );
+  assertStoredDatesArePlausible(execution.inputs, initValues || {});
 
   // 7. Transform transitions
   const transitions = transformTransitions(execution.transitions);
@@ -163,11 +176,18 @@ export function buildInitVars(
 /**
  * Transform the execution.inputs object into InputDef[] array
  * All inputs are processed uniformly - conditions based on issuer field
+ *
+ * @param storedVariables - Names of the variables the agreement stores at
+ *   creation (those in `execution.initialize.data`). Needed only when an input
+ *   has a `time` bound that names a variable.
  */
 export function transformInputs(
   inputs: AgreementJson["execution"]["inputs"],
-  variables: AgreementJson["variables"]
+  variables: AgreementJson["variables"],
+  storedVariables?: Iterable<string>
 ): InputDef[] {
+  const stored = storedVariables === undefined ? undefined : new Set(storedVariables);
+
   return Object.entries(inputs).map(([inputKey, inputDef]) => {
     const id = keccak256(stringToHex(inputKey)) as Hex;
 
@@ -208,6 +228,7 @@ export function transformInputs(
     }
 
     conditions.push(...buildIssuerConditions(inputDef.issuer, variables));
+    conditions.push(...buildTimeConditions(inputKey, inputDef.time, variables, stored));
 
     return {
       id,
@@ -347,6 +368,12 @@ function resolveInputFieldMetadata(
   variables: AgreementJson["variables"]
 ): InputFieldMetadata {
   const varName = extractVariableName(fieldRef);
+  if ((varName || fieldKey) === BLOCK_TIME_FIELD_NAME) {
+    throw new Error(
+      `'${BLOCK_TIME_FIELD_NAME}' is reserved for the block time and cannot be an input field. ` +
+      `To limit when an input is accepted, give the input a 'time' window.`
+    );
+  }
   const varDef = varName ? variables[varName] : null;
   const varType = varDef?.type ?? getInlineVariableType(fieldRef);
   const validation = varDef?.validation ?? getInlineValidation(fieldRef);
@@ -422,6 +449,203 @@ function buildIssuerConditions(
       ) as Hex,
     },
   ];
+}
+
+const TIME_BOUNDS = {
+  // The input is accepted from the moment on: block time >= moment.
+  notBefore: { fixed: Op.UINT_GTE_CONST, stored: Op.UINT_GTE_VAR },
+  // The input is accepted until the moment: block time < moment.
+  before: { fixed: Op.UINT_LT_CONST, stored: Op.UINT_LT_VAR },
+} as const;
+
+const ISO_DATE_TIME_WITH_ZONE =
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d+))?)?(Z|[+-]\d{2}:\d{2})$/;
+
+// A bound that names a stored date is exactly one variable reference, nothing around it.
+const TIME_VARIABLE_REFERENCE = /^\$\{variables\.(\w+)(?:\.value)?\}$/;
+
+// Fixed moments and stored dates outside this range are almost always a mistake:
+// milliseconds given as seconds, a date written as digits, or an empty value.
+const EARLIEST_MOMENT = 1_000_000_000n; // 2001-09-09
+const LATEST_MOMENT = 10_000_000_000n; // 2286-11-20
+
+function assertPlausibleMoment(where: string, seconds: bigint): void {
+  if (seconds < EARLIEST_MOMENT || seconds >= LATEST_MOMENT) {
+    throw new Error(
+      `${where} is ${seconds} seconds since 1970-01-01 UTC, which is outside 2001 to 2286. ` +
+      `A moment is given in seconds, not milliseconds, and not as a date written in digits.`
+    );
+  }
+}
+
+/**
+ * Seconds since 1970-01-01 UTC for a fixed moment in a `time` window.
+ */
+function parseFixedMoment(inputKey: string, bound: string, value: unknown): bigint {
+  const where = `Input '${inputKey}': time.${bound}`;
+  if (typeof value === "number") {
+    if (!Number.isSafeInteger(value) || value < 0) {
+      throw new Error(`${where} must be a whole number of seconds since 1970-01-01 UTC, received ${value}`);
+    }
+    return BigInt(value);
+  }
+  if (typeof value !== "string") {
+    throw new Error(`${where} must be a number of seconds, an ISO 8601 date-time or a variable reference`);
+  }
+  if (/^\d+$/.test(value)) {
+    return BigInt(value);
+  }
+  // A date-time without a zone would mean a different moment on each machine.
+  const parts = ISO_DATE_TIME_WITH_ZONE.exec(value);
+  const ms = parts ? Date.parse(value) : NaN;
+  if (!parts || Number.isNaN(ms) || ms < 0) {
+    throw new Error(
+      `${where} '${value}' is not a moment the SDK can read. Use seconds since 1970-01-01 UTC, ` +
+      `an ISO 8601 date-time with a zone such as '2027-03-01T00:00:00Z', or '\${variables.name}'.`
+    );
+  }
+  if (parts[7] !== undefined && /[1-9]/.test(parts[7])) {
+    throw new Error(`${where} '${value}' has a fraction of a second; the contract compares whole seconds`);
+  }
+  // Date.parse moves a day that does not exist into the next month. Read the
+  // moment back in the zone it was written in and require the same fields.
+  const zone = parts[8] === "Z" ? 0 : (parts[8][0] === "-" ? -1 : 1) * (Number(parts[8].slice(1, 3)) * 60 + Number(parts[8].slice(4, 6)));
+  const local = new Date(ms + zone * 60_000);
+  const written = [parts[1], parts[2], parts[3], parts[4], parts[5], parts[6] ?? "0"].map(Number);
+  const read = [local.getUTCFullYear(), local.getUTCMonth() + 1, local.getUTCDate(), local.getUTCHours(), local.getUTCMinutes(), local.getUTCSeconds()];
+  if (written.some((field, i) => field !== read[i])) {
+    throw new Error(`${where} '${value}' is not a date and time that exists`);
+  }
+  return BigInt(ms / 1000);
+}
+
+/**
+ * A stored date that a time window names is checked when the agreement is
+ * built: an empty value would be stored as 0 and leave the window meaningless.
+ */
+function assertStoredDatesArePlausible(
+  inputs: AgreementJson["execution"]["inputs"],
+  initValues: Record<string, InitValue>
+): void {
+  for (const [inputKey, inputDef] of Object.entries(inputs)) {
+    const time = inputDef.time;
+    if (typeof time !== "object" || time === null) continue;
+    for (const bound of ["notBefore", "before"] as const) {
+      const value = Object.prototype.hasOwnProperty.call(time, bound) ? time[bound] : undefined;
+      const reference = typeof value === "string" ? TIME_VARIABLE_REFERENCE.exec(value) : null;
+      if (!reference) continue;
+      const initValue = initValues[reference[1]];
+      const where = `Input '${inputKey}': time.${bound} names '${reference[1]}', whose value`;
+      if (typeof initValue !== "bigint" && !(typeof initValue === "string" && /^\d+$/.test(initValue))) {
+        throw new Error(`${where} must be a whole number of seconds since 1970-01-01 UTC, received '${String(initValue)}'`);
+      }
+      assertPlausibleMoment(where, BigInt(initValue));
+    }
+  }
+}
+
+/**
+ * Conditions for an input's `time` window. Each compares the block time, which
+ * the engine reads in place of a submitted field when a condition names the
+ * reserved block-time field.
+ */
+function buildTimeConditions(
+  inputKey: string,
+  time: InputTimeWindow | undefined,
+  variables: AgreementJson["variables"],
+  storedVariables: Set<string> | undefined
+): Condition[] {
+  if (time === undefined) {
+    return [];
+  }
+  if (typeof time !== "object" || time === null || Array.isArray(time)) {
+    throw new Error(`Input '${inputKey}': 'time' must be an object with 'notBefore', 'before' or both`);
+  }
+  const unknown = Object.keys(time).filter((key) => !Object.prototype.hasOwnProperty.call(TIME_BOUNDS, key));
+  if (unknown.length > 0) {
+    throw new Error(
+      `Input '${inputKey}': unknown time bound '${unknown[0]}'. Use 'notBefore' (accepted from that moment on) ` +
+      `or 'before' (accepted until that moment).`
+    );
+  }
+
+  const fieldId = fieldToBytes32(BLOCK_TIME_FIELD_NAME);
+  const conditions: Condition[] = [];
+  const fixed: { notBefore?: bigint; before?: bigint } = {};
+
+  const stored: { notBefore?: string; before?: string } = {};
+  for (const bound of ["notBefore", "before"] as const) {
+    // Own properties only: the window is what the hashed document says.
+    if (!Object.prototype.hasOwnProperty.call(time, bound) || time[bound] === undefined) {
+      continue;
+    }
+    const value = time[bound];
+    const reference = typeof value === "string" ? TIME_VARIABLE_REFERENCE.exec(value) : null;
+    if (typeof value === "string" && !reference && value.includes("${")) {
+      throw new Error(
+        `Input '${inputKey}': time.${bound} '${value}' must be exactly one variable reference such as ` +
+        `'\${variables.dueDate}'. Arithmetic and text around a reference are not supported.`
+      );
+    }
+    const varName = reference ? reference[1] : "";
+    if (!varName) {
+      const seconds = parseFixedMoment(inputKey, bound, value);
+      assertPlausibleMoment(`Input '${inputKey}': time.${bound}`, seconds);
+      fixed[bound] = seconds;
+      conditions.push({
+        op: TIME_BOUNDS[bound].fixed,
+        fieldId,
+        bytesArg: encodeAbiParameters([{ type: "uint256" }], [seconds]) as Hex,
+      });
+      continue;
+    }
+
+    const where = `Input '${inputKey}': time.${bound}`;
+    const varDef = variables[varName];
+    if (!varDef) {
+      throw new Error(`${where} references unknown variable '${varName}'`);
+    }
+    if (varDef.type !== "uint256") {
+      throw new Error(
+        `${where}: variable '${varName}' must be type 'uint256' holding seconds since 1970-01-01 UTC, ` +
+        `received '${varDef.type}'`
+      );
+    }
+    if (storedVariables === undefined) {
+      throw new Error(
+        `${where} names variable '${varName}', and transformInputs was not told which variables the agreement ` +
+        `stores. Pass the names in execution.initialize.data, or use transformAgreementToOnChainParams.`
+      );
+    }
+    if (!storedVariables.has(varName)) {
+      throw new Error(
+        `${where}: variable '${varName}' is not stored when the agreement is created, so the input could never ` +
+        `be accepted. List it in execution.initialize.data.`
+      );
+    }
+    stored[bound] = varName;
+    conditions.push({
+      op: TIME_BOUNDS[bound].stored,
+      fieldId,
+      bytesArg: fieldToBytes32(varName),
+    });
+  }
+
+  if (conditions.length === 0) {
+    throw new Error(`Input '${inputKey}': 'time' needs 'notBefore', 'before' or both`);
+  }
+  if (stored.notBefore !== undefined && stored.notBefore === stored.before) {
+    throw new Error(
+      `Input '${inputKey}': time.notBefore and time.before name the same variable '${stored.before}', ` +
+      `so the input could never be accepted`
+    );
+  }
+  if (fixed.notBefore !== undefined && fixed.before !== undefined && fixed.notBefore >= fixed.before) {
+    throw new Error(
+      `Input '${inputKey}': time.notBefore is not earlier than time.before, so the input could never be accepted`
+    );
+  }
+  return conditions;
 }
 
 /**
@@ -509,6 +733,15 @@ export function transformActions(
   return actions.map((a) => {
     if (a.call.type !== "evmCall") {
       throw new Error(`Unsupported action call type: ${(a.call as any).type}`);
+    }
+
+    // The contracts cannot hold ETH, and V1.1 refuses to create an agreement
+    // whose action forwards any.
+    if (BigInt(a.call.value ?? "0") !== 0n) {
+      throw new Error(
+        `Action '${a.id}' forwards ETH (value ${a.call.value}), which agreements cannot do: ` +
+        `set its value to "0" or leave it out`
+      );
     }
 
     const abi = a.call.abi as any[];

@@ -4,7 +4,7 @@ pragma solidity ^0.8.20;
 import "@openzeppelin/contracts/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
-import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import "@openzeppelin/contracts/utils/cryptography/SignatureChecker.sol";
 
 // ============================================================================
 // INTERFACES
@@ -16,7 +16,8 @@ interface IInputVerifier {
      * @param agreement  Address of the agreement clone contract.
      * @param inputId    Logical input id for this submission.
      * @param payload    Raw bytes passed to submitInput (e.g. abi.encode(DataField[])).
-     * @param sender     msg.sender of submitInput.
+     * @param sender     Effective authorizing actor: msg.sender for a direct
+     *                   submission, or the permit signer for a relayed one.
      */
     function verify(
         address agreement,
@@ -96,7 +97,8 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
 
     struct Condition {
         Op op;
-        bytes32 fieldId;   // which DataField.id this condition targets (the field being checked)
+        bytes32 fieldId;   // which DataField.id this condition targets (the field being checked),
+                           // or BLOCK_TIME_FIELD to check the block time instead of a submitted field
         bytes bytesArg;    // For CONST ops: constant value encoded. For VAR ops: target fieldId encoded as bytes32
     }
 
@@ -130,6 +132,8 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
      * @dev If the action call fails, the entire submitInput reverts and the transition is not applied.
      *
      * `target.call(data)` is executed by this AgreementEngine clone (so msg.sender to `target` is the agreement).
+     * The target must have code when the transition runs. No ETH is forwarded: the
+     * engine cannot hold ETH, so `value` must be zero and creation reverts otherwise.
      */
     struct Action {
         address target;
@@ -170,16 +174,31 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
     // Optional per-transition actions, keyed by (fromState,inputId)
     mapping(bytes32 => mapping(bytes32 => Action)) internal actions;
     
-    // Permit functionality - nonce tracking per signer
+    // Permit functionality - nonce tracking per signer. Each accepted input
+    // consumes the current nonce of the account that authorized it: the signer of
+    // a permit, or the caller of `submitInput`. A permit is therefore single-use,
+    // a signer has at most one live permit on this agreement at a time, and an
+    // input the signer submits directly retires the permit it had outstanding.
+    // A signer withdraws an unsubmitted permit with `cancelPermits`.
     mapping(address => uint256) public nonces;
     
-    // EIP-712 typehash for permit
-    bytes32 public constant PERMIT_TYPEHASH = keccak256(
-        "PermitInput(bytes32 inputId,bytes payload,uint256 nonce,uint256 deadline)"
-    );
+    // Reserved field id for time conditions. A condition whose `fieldId` is this
+    // value compares the block time (`block.timestamp`, in seconds) where it
+    // would otherwise compare a submitted field. Any of the UINT comparisons
+    // applies, against a constant or a stored UINT256 variable, for example
+    // UINT_GTE_VAR for "not before the stored date" and UINT_LT_CONST for
+    // "before a fixed moment". The time is read when the input is submitted,
+    // for a direct input and for a permit alike, so a permit signed inside a
+    // time window is refused once the window has closed. No input field and no
+    // stored variable may use this id.
+    bytes32 internal constant BLOCK_TIME_FIELD = keccak256("block.timestamp");
 
-    // Unused state variable to modify bytecode (version marker)
-    uint256 private _versionMarker = 0x2024;
+    // EIP-712 typehash for permit. The signer binds its own address, so a
+    // signature validated by a smart account cannot be presented for another
+    // account that accepts the same key.
+    bytes32 public constant PERMIT_TYPEHASH = keccak256(
+        "PermitInput(address signer,bytes32 inputId,bytes payload,uint256 nonce,uint256 deadline)"
+    );
 
     // ========================================================================
     // ERRORS
@@ -188,6 +207,7 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
     error SenderAddressMismatch(address sender, address expected);
     error SenderAddressNotAllowed(address sender);
     error ComparisonFailed(string op, string fieldType);
+    error ReservedFieldId(bytes32 fieldId);
     error VarNotSet(bytes32 fieldId);
     error TypeMismatch(string expected, string actual);
     error NotInitialized();
@@ -196,7 +216,10 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
     error InvalidSignature();
     error InvalidNonce(address signer, uint256 provided, uint256 expected);
     error ActionTargetZero();
+    error ActionValueNotSupported(bytes32 fromState, bytes32 inputId, uint256 value);
     error ActionCallFailed(address target, bytes revertData);
+    error ActionTargetHasNoCode(address target);
+    error ActionERC20ReturnInvalid(address target, bytes returnData);
     error VerifierZero();
     error DuplicateVerifier(bytes32 key);
     error UnknownVerifier(bytes32 key);
@@ -223,6 +246,10 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
         address indexed submitter,
         bytes32 indexed inputId
     );
+    /// @notice Emitted when a signer cancels the input permit it had outstanding.
+    /// @param signer The account whose permit nonce was consumed
+    /// @param newNonce The signer's permit nonce after the call
+    event PermitsCancelled(address indexed signer, uint256 newNonce);
     event ActionRegistered(
         bytes32 indexed fromState,
         bytes32 indexed inputId,
@@ -303,6 +330,12 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
      * @notice Submit an input to progress the agreement FSM.
      * @param inputId The logical input identifier.
      * @param payload Encoded DataField[] array.
+     * @dev An accepted input consumes the caller's permit nonce, as an accepted
+     *      permit does for its signer. An input permit the caller signed earlier
+     *      and that was not submitted stops verifying, so it cannot be presented
+     *      later, when the agreement accepts that input again. Only the caller's
+     *      nonce moves: permits signed by other parties stay valid. A reverted
+     *      call consumes nothing.
      */
     function submitInput(
         bytes32 inputId,
@@ -319,24 +352,27 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
         // 2. Structural checks
         _validateFields(def, fields);
 
-        // 3. Persist any fields that have persist = true (before condition validation)
-        _persistFields(def, fields);
-
-        // 4. Built-in condition checks (no permit signer, so uses msg.sender)
+        // 3. Authorize against the pre-submission state.
         _validateConditions(def, fields, address(0));
 
-        // 5. External verifiers
-        _runVerifiers(def, inputId, payload);
+        // 4. External verifiers receive the effective authorizing actor.
+        _runVerifiers(def, inputId, payload, msg.sender);
 
-        // 6. FSM transition
+        // 5. Resolve the transition before writing submission data.
         bytes32 from = currentState;
         (bool found, bytes32 to) = _findTransition(from, inputId);
         require(found, "No valid transition");
 
-        // 7. Update state (action reads may expect updated state; revert will roll this back)
+        // 6. Retire the caller's outstanding permit (revert will roll this back).
+        nonces[msg.sender]++;
+
+        // 7. Persist only after every authorization check has succeeded.
+        _persistFields(def, fields);
+
+        // 8. Update state (action reads may expect updated state; revert will roll this back).
         currentState = to;
 
-        // 8. Optional action (atomic with transition)
+        // 9. Optional action (atomic with transition)
         _executeActionIfAny(from, to, inputId);
 
         emit InputAccepted(from, to, inputId, payload);
@@ -348,18 +384,25 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
      * @param inputId The logical input identifier
      * @param payload Encoded DataField[] array
      * @param deadline The timestamp after which the permit is invalid
-     * @param v, r, s ECDSA signature components
+     * @param signature Opaque EOA or ERC-1271 signature bytes
      * @dev The signer creates an off-chain signature authorizing this specific input submission.
      *      Anyone can submit using this signature, but it must match exactly what was signed.
+     *      The signature covers the signer's address, the input, its payload, the signer's
+     *      nonce on this agreement and the deadline. It does not name a state: the permit
+     *      stays usable until its deadline, in any state that accepts the input, until it
+     *      or another permit of the same signer is accepted, the signer has an input
+     *      accepted through `submitInput`, or the signer withdraws it with
+     *      `cancelPermits`. Another party's input does not affect it. Several parties can
+     *      therefore sign up front and have their permits submitted in whatever order the
+     *      agreement's transitions allow. A payload should restate what the signer approves
+     *      (a document hash, an amount) rather than rely on values stored by earlier inputs.
      */
     function submitInputWithPermit(
         address signer,
         bytes32 inputId,
         bytes calldata payload,
         uint256 deadline,
-        uint8 v,
-        bytes32 r,
-        bytes32 s
+        bytes calldata signature
     ) external nonReentrant {
         if (owner == address(0)) revert NotInitialized();
         
@@ -373,6 +416,7 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
         bytes32 structHash = keccak256(
             abi.encode(
                 PERMIT_TYPEHASH,
+                signer,
                 inputId,
                 keccak256(payload),
                 currentNonce,
@@ -380,9 +424,7 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
             )
         );
         bytes32 hash = _hashTypedDataV4(structHash);
-        address recoveredSigner = ECDSA.recover(hash, v, r, s);
-        
-        if (recoveredSigner != signer) {
+        if (!SignatureChecker.isValidSignatureNow(signer, hash, signature)) {
             revert InvalidSignature();
         }
         
@@ -399,19 +441,20 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
         // Validate fields
         _validateFields(def, fields);
         
-        // Persist fields
-        _persistFields(def, fields);
-        
-        // Validate conditions - when using permit, SENDER_EQ_VAR_ADDRESS checks the signer, not msg.sender
+        // Authorize against the pre-submission state. For permits, sender
+        // conditions check the signer rather than the relayer.
         _validateConditions(def, fields, signer);
         
-        // Run verifiers (they receive msg.sender as the sender parameter)
-        _runVerifiers(def, inputId, payload);
+        // Verifiers must see the same effective actor as built-in conditions.
+        _runVerifiers(def, inputId, payload, signer);
         
         // FSM transition
         bytes32 from = currentState;
         (bool found, bytes32 to) = _findTransition(from, inputId);
         require(found, "No valid transition");
+
+        // Persist only after every authorization check has succeeded.
+        _persistFields(def, fields);
         
         // Update state (revert will roll back)
         currentState = to;
@@ -421,6 +464,31 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
         
         emit InputAccepted(from, to, inputId, payload);
         emit InputSubmittedWithPermit(signer, msg.sender, inputId);
+    }
+
+    /**
+     * @notice Cancel the input permit the caller has signed for this agreement
+     *         and that has not been submitted yet.
+     * @dev Consumes the caller's current permit nonce. A permit carries the nonce
+     *      that was current when it was signed, so every unsubmitted permit of the
+     *      caller that names the consumed nonce stops verifying (`InvalidSignature`).
+     *      The next permit must be signed with the returned nonce.
+     *
+     *      Scope: the caller only, on this agreement only. Each agreement is its own
+     *      clone with its own nonces, so other signers and other agreements are
+     *      untouched. There is no signed path: a smart account (ERC-1271) cancels by
+     *      calling this from the account itself. Cancelling does not stop the caller
+     *      from submitting directly: `submitInput` checks no nonce, and consumes the
+     *      caller's nonce when its input is accepted.
+     *
+     *      One call consumes one nonce. A signer that deliberately signed permits
+     *      for later nonces calls once for each.
+     * @return newNonce The caller's permit nonce after the call
+     */
+    function cancelPermits() external returns (uint256 newNonce) {
+        if (owner == address(0)) revert NotInitialized();
+        newNonce = ++nonces[msg.sender];
+        emit PermitsCancelled(msg.sender, newNonce);
     }
 
     // ========================================================================
@@ -457,6 +525,8 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
 
             // Deep copy fields array
             for (uint256 j = 0; j < src.fields.length; j++) {
+                // A condition on this id reads the block time, never a submitted field.
+                if (src.fields[j].fieldId == BLOCK_TIME_FIELD) revert ReservedFieldId(BLOCK_TIME_FIELD);
                 dst.fields.push(src.fields[j]);
             }
 
@@ -490,6 +560,7 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
         for (uint256 i = 0; i < initVars_.length; i++) {
             DataField calldata iv = initVars_[i];
             require(iv.id != bytes32(0), "InitVar id zero");
+            if (iv.id == BLOCK_TIME_FIELD) revert ReservedFieldId(BLOCK_TIME_FIELD);
 
             // Validate the field can be decoded as the claimed type
             _validateFieldDecoding(iv.data, iv.fType);
@@ -510,6 +581,9 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
         for (uint256 i = 0; i < actions_.length; i++) {
             ActionInit calldata a = actions_[i];
             if (a.target == address(0)) revert ActionTargetZero();
+            // The engine cannot hold ETH, so an action that forwards value could
+            // never execute and would block its transition for good.
+            if (a.value != 0) revert ActionValueNotSupported(a.fromState, a.inputId, a.value);
             actions[a.fromState][a.inputId] = Action({
                 target: a.target,
                 value: a.value,
@@ -566,7 +640,8 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
     function _runVerifiers(
         InputDef storage def,
         bytes32 inputId,
-        bytes calldata payload
+        bytes calldata payload,
+        address effectiveSender
     ) internal view {
         for (uint256 i = 0; i < def.verifierKeys.length; i++) {
             bytes32 key = def.verifierKeys[i];
@@ -578,7 +653,7 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
                 address(this),  // Clone address as agreement identifier
                 inputId,
                 payload,
-                msg.sender
+                effectiveSender
             );
         }
     }
@@ -641,6 +716,8 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
 
     /**
      * @notice Validate all conditions defined for this input.
+     * @dev A condition is a sender check, a time check (`fieldId` is
+     *      BLOCK_TIME_FIELD) or a check on a submitted field.
      * @param permitSigner If non-zero, SENDER_EQ_VAR_ADDRESS conditions check this address instead of msg.sender
      */
     function _validateConditions(
@@ -656,6 +733,16 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
             }
             if (c.op == Op.SENDER_IN_ALLOWED_ADDRESSES) {
                 _evalAllowedSenderCondition(c, permitSigner);
+                continue;
+            }
+
+            if (c.fieldId == BLOCK_TIME_FIELD) {
+                // A time condition: the block time stands in for a submitted
+                // UINT256 field and goes through the same comparisons.
+                _evalCondition(
+                    c,
+                    DataField({id: BLOCK_TIME_FIELD, fType: FieldType.UINT256, data: abi.encode(block.timestamp)})
+                );
                 continue;
             }
 
@@ -960,54 +1047,44 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
 
     /**
      * @notice Helper to convert Op enum to string for error messages.
+     * @dev Every branch names the enum member it stands for, so the name stays
+     *      right when the enum changes.
      */
     function _opToString(Op op) internal pure returns (string memory) {
-        if (op == Op.SENDER_EQ_VAR_ADDRESS) {
-            return "SENDER_EQ_VAR_ADDRESS";
-        }
-        if (op == Op.SENDER_IN_ALLOWED_ADDRESSES) {
-            return "SENDER_IN_ALLOWED_ADDRESSES";
-        }
-
-        uint8 opValue = uint8(op);
-        
-        if (opValue <= 2) {
-            return _getStringOpName(opValue);
-        } else if (opValue <= 7) {
-            return _getUintConstOpName(opValue);
-        } else if (opValue <= 12) {
-            return _getUintVarOpName(opValue);
-        } else if (opValue <= 14) {
-            return _getAddressOpName(opValue);
-        }
+        if (op <= Op.STRING_EQ_VAR) return _getStringOpName(op);
+        if (op <= Op.UINT_LTE_CONST) return _getUintConstOpName(op);
+        if (op <= Op.UINT_LTE_VAR) return _getUintVarOpName(op);
+        if (op <= Op.ADDRESS_EQ_VAR) return _getAddressOpName(op);
+        if (op == Op.SENDER_EQ_VAR_ADDRESS) return "SENDER_EQ_VAR_ADDRESS";
+        if (op == Op.SENDER_IN_ALLOWED_ADDRESSES) return "SENDER_IN_ALLOWED_ADDRESSES";
         return "UNKNOWN_OPERATION";
     }
 
-    function _getStringOpName(uint8 opValue) private pure returns (string memory) {
-        if (opValue == 0) return "STRING_MIN_LENGTH";
-        if (opValue == 1) return "STRING_MAX_LENGTH";
-        if (opValue == 2) return "STRING_EQ_CONST";
+    function _getStringOpName(Op op) private pure returns (string memory) {
+        if (op == Op.STRING_MIN_LENGTH) return "STRING_MIN_LENGTH";
+        if (op == Op.STRING_MAX_LENGTH) return "STRING_MAX_LENGTH";
+        if (op == Op.STRING_EQ_CONST) return "STRING_EQ_CONST";
         return "STRING_EQ_VAR";
     }
 
-    function _getUintConstOpName(uint8 opValue) private pure returns (string memory) {
-        if (opValue == 3) return "UINT_EQ_CONST";
-        if (opValue == 4) return "UINT_GT_CONST";
-        if (opValue == 5) return "UINT_GTE_CONST";
-        if (opValue == 6) return "UINT_LT_CONST";
+    function _getUintConstOpName(Op op) private pure returns (string memory) {
+        if (op == Op.UINT_EQ_CONST) return "UINT_EQ_CONST";
+        if (op == Op.UINT_GT_CONST) return "UINT_GT_CONST";
+        if (op == Op.UINT_GTE_CONST) return "UINT_GTE_CONST";
+        if (op == Op.UINT_LT_CONST) return "UINT_LT_CONST";
         return "UINT_LTE_CONST";
     }
 
-    function _getUintVarOpName(uint8 opValue) private pure returns (string memory) {
-        if (opValue == 8) return "UINT_EQ_VAR";
-        if (opValue == 9) return "UINT_GT_VAR";
-        if (opValue == 10) return "UINT_GTE_VAR";
-        if (opValue == 11) return "UINT_LT_VAR";
+    function _getUintVarOpName(Op op) private pure returns (string memory) {
+        if (op == Op.UINT_EQ_VAR) return "UINT_EQ_VAR";
+        if (op == Op.UINT_GT_VAR) return "UINT_GT_VAR";
+        if (op == Op.UINT_GTE_VAR) return "UINT_GTE_VAR";
+        if (op == Op.UINT_LT_VAR) return "UINT_LT_VAR";
         return "UINT_LTE_VAR";
     }
 
-    function _getAddressOpName(uint8 opValue) private pure returns (string memory) {
-        if (opValue == 13) return "ADDRESS_EQ_CONST";
+    function _getAddressOpName(Op op) private pure returns (string memory) {
+        if (op == Op.ADDRESS_EQ_CONST) return "ADDRESS_EQ_CONST";
         return "ADDRESS_EQ_VAR";
     }
 
@@ -1040,18 +1117,43 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
         Action storage a = actions[fromState][inputId];
         if (!a.exists) return;
 
-        // slither-disable-next-line arbitrary-send-eth
-        (bool ok, bytes memory ret) = a.target.call{value: a.value}(a.data);
+        // A call to an address without code succeeds and does nothing. Checked
+        // here rather than at creation, so a target may be deployed after the
+        // agreement as long as it exists when the transition runs.
+        if (a.target.code.length == 0) revert ActionTargetHasNoCode(a.target);
+
+        bytes memory callData = a.data;
+        bool isERC20Transfer = _isERC20TransferCall(callData);
+
+        // No value is forwarded: `_storeActions` rejects actions that carry one.
+        (bool ok, bytes memory ret) = a.target.call(callData);
         if (!ok) revert ActionCallFailed(a.target, ret);
+        if (isERC20Transfer && ret.length != 0) {
+            if (ret.length != 32) revert ActionERC20ReturnInvalid(a.target, ret);
+
+            uint256 result;
+            assembly ("memory-safe") {
+                result := mload(add(ret, 32))
+            }
+            if (result != 1) revert ActionERC20ReturnInvalid(a.target, ret);
+        }
 
         emit ActionExecuted(fromState, toState, inputId, a.target);
     }
 
     /**
-     * @notice Unused function to modify bytecode signature
-     * @dev This function is intentionally unused but changes contract bytecode
+     * @dev Apply SafeERC20-style optional-return checks to the two ERC-20
+     * transfer selectors without imposing boolean-return semantics on generic
+     * agreement actions such as registry or attestation calls.
      */
-    function _unusedBytecodeModifier() private pure returns (uint256) {
-        return 0xDEADBEEF;
+    function _isERC20TransferCall(bytes memory data) private pure returns (bool) {
+        if (data.length < 4) return false;
+
+        bytes4 selector;
+        assembly ("memory-safe") {
+            selector := mload(add(data, 32))
+        }
+        return selector == 0xa9059cbb || selector == 0x23b872dd;
     }
+
 }

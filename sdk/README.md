@@ -97,6 +97,57 @@ const state = await readOnlyAgreement.getCurrentState();
 const data = await readOnlyAgreement.getData();
 ```
 
+### Time Windows
+
+An input can be limited to a period of time. Add `time` to the input in the
+agreement JSON:
+
+```json
+"deliver": {
+  "type": "VerifiedCredentialEIP712",
+  "data": { "deliveryNote": "${variables.deliveryNote}" },
+  "issuer": "${variables.supplier.value}",
+  "time": { "before": "${variables.dueDate}" }
+}
+```
+
+- `notBefore`: the input is accepted at that moment and after it.
+- `before`: the input is accepted only before that moment.
+
+Each bound is a fixed moment or a stored date:
+
+- A fixed moment is a whole number of seconds since 1970-01-01 UTC, or an
+  ISO 8601 date-time with a zone, such as `"2027-03-01T00:00:00Z"`.
+- A stored date is `"${variables.name}"`. The variable must have type
+  `uint256`, hold seconds since 1970-01-01 UTC, and be listed in
+  `execution.initialize.data`, so that the agreement stores it when it is
+  created.
+
+A bound is exactly one of those forms. Arithmetic or text around a variable
+reference, a date that does not exist, a moment outside 2001 to 2286 (usually
+milliseconds given as seconds) and the same stored date on both bounds are
+refused when the agreement is transformed.
+
+The contract reads the block time when the input is submitted, directly or by
+permit. What counts is the block the input lands in, not when it was signed: a
+permit signed inside a window is refused if it is submitted after the window
+has closed. A refused input reverts with `ComparisonFailed`.
+
+The block time is set by the block producer and can differ from the clock by a
+few seconds. Use windows for dates and deadlines, not to order inputs that
+arrive seconds apart.
+
+`agreements/delivery-deadline` in the repository is a complete example.
+
+Time windows need both sides to know them:
+
+- **The contracts.** Create the agreement on a V1.1 factory whose engine has
+  time conditions. An older engine, V1.0 included, accepts the agreement and
+  does not enforce the window: there the party submitting an input can state
+  the time itself.
+- **The SDK.** A version of this SDK from before time windows ignores `time`
+  and deploys the agreement with no window, without an error.
+
 ## License
 
 The SDK package is licensed under `Apache-2.0`. See [`LICENSE`](LICENSE), [`NOTICE`](NOTICE), [../licenses/Apache-2.0.txt](../licenses/Apache-2.0.txt), and [../LICENSING.md](../LICENSING.md).

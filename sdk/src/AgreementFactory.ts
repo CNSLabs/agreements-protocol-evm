@@ -9,7 +9,6 @@ import {
   decodeEventLog,
   encodeAbiParameters,
   keccak256,
-  stringToHex,
 } from 'viem';
 import { executeTransaction, readContractResult } from "./transactions.js";
 import { withSdkSpan } from "./telemetry.js";
@@ -21,9 +20,37 @@ import { AgreementFactoryABI } from "./generated/AgreementFactoryAbi.js";
 // ABI is extracted directly from contract artifacts as an array
 const factoryAbi: Abi = AgreementFactoryABI as Abi;
 
-// Must match AgreementFactory.sol exactly (PERMIT_WITH_ACTIONS_TYPEHASH)
-const PERMIT_WITH_ACTIONS_TYPE = "PermitAgreementWithActions(string docUri,bytes32 docHash,bytes32 initialState,bytes32 inputDefsHash,bytes32 transitionsHash,bytes32 initVarsHash,bytes32 verifiersHash,bytes32 actionsHash,uint256 nonce,uint256 deadline)";
-const PERMIT_WITH_ACTIONS_TYPEHASH: Hex = keccak256(stringToHex(PERMIT_WITH_ACTIONS_TYPE));
+// EIP-712 field lists. Names, types and order must match AgreementFactory.sol
+// exactly (PERMIT_WITH_ACTIONS_TYPEHASH and DETERMINISTIC_PERMIT_WITH_ACTIONS_TYPEHASH).
+const PERMIT_WITH_ACTIONS_FIELDS = [
+  { name: "signer", type: "address" },
+  { name: "docUri", type: "string" },
+  { name: "docHash", type: "bytes32" },
+  { name: "initialState", type: "bytes32" },
+  { name: "inputDefsHash", type: "bytes32" },
+  { name: "transitionsHash", type: "bytes32" },
+  { name: "initVarsHash", type: "bytes32" },
+  { name: "verifiersHash", type: "bytes32" },
+  { name: "actionsHash", type: "bytes32" },
+  { name: "nonce", type: "uint256" },
+  { name: "deadline", type: "uint256" },
+] as const;
+
+const DETERMINISTIC_PERMIT_WITH_ACTIONS_FIELDS = [
+  { name: "signer", type: "address" },
+  { name: "docUri", type: "string" },
+  { name: "docHash", type: "bytes32" },
+  { name: "initialState", type: "bytes32" },
+  { name: "inputDefsHash", type: "bytes32" },
+  { name: "transitionsHash", type: "bytes32" },
+  { name: "initVarsHash", type: "bytes32" },
+  { name: "verifiersHash", type: "bytes32" },
+  { name: "actionsHash", type: "bytes32" },
+  { name: "salt", type: "bytes32" },
+  { name: "predictedAgreement", type: "address" },
+  { name: "nonce", type: "uint256" },
+  { name: "deadline", type: "uint256" },
+] as const;
 
 export type CreateAgreementOptions = {
   docUri?: string;
@@ -31,11 +58,11 @@ export type CreateAgreementOptions = {
   verifiers?: VerifierInit[];
 };
 
-export type CreateAgreementPermitSignature = {
-  v: number;
-  r: Hex;
-  s: Hex;
-};
+/**
+ * Opaque permit signature bytes, passed to the factory unchanged: a 65-byte
+ * EOA signature, or whatever bytes an ERC-1271 signer contract accepts.
+ */
+export type CreateAgreementPermitSignature = Hex;
 
 interface FactoryClients {
   walletClient: WalletClient;
@@ -401,10 +428,61 @@ export class AgreementFactory {
   }
 
   /**
-   * Create an EIP-712 permit signature for creating an agreement via the factory.
+   * Hash the agreement creation parameters the way the factory does before
+   * it checks a permit.
+   */
+  private async permitFields(
+    signerAddress: Hex,
+    agreement: AgreementJson,
+    deadline: number,
+    options?: CreateAgreementOptions,
+  ) {
+    const params = transformAgreementToOnChainParams(
+      agreement,
+      options?.docUri,
+      options?.initValues,
+    );
+    const verifiers = options?.verifiers ?? params.verifiers;
+
+    const [nonce, chainId] = await Promise.all([
+      this.getNonce(signerAddress),
+      this.clients.publicClient.getChainId(),
+    ]);
+
+    return {
+      domain: {
+        name: "AgreementFactory",
+        version: "1",
+        chainId,
+        verifyingContract: this.config.factoryAddress,
+      } as const,
+      agreementFields: {
+        signer: signerAddress,
+        docUri: params.docUri,
+        docHash: params.docHash,
+        initialState: params.initialState,
+        inputDefsHash: this.hashInputDefs(params.inputDefs),
+        transitionsHash: this.hashTransitions(params.transitions),
+        initVarsHash: this.hashInitVars(params.initVars),
+        verifiersHash: this.hashVerifiers(verifiers),
+        actionsHash: this.hashActions(params.actions),
+      },
+      nonce,
+      deadline: BigInt(deadline),
+    };
+  }
+
+  /**
+   * Create an EIP-712 permit signature for creating an agreement via the factory
+   * with `createAgreementWithPermit`.
    *
-   * The permit binds the full agreement creation parameters (docUri/docHash/initialState
-   * and hashes of inputDefs/transitions/initVars/verifiers/actions) plus the signer's current nonce + deadline.
+   * The permit names its signer (the wallet client's account) and binds the full
+   * agreement creation parameters (docUri/docHash/initialState and hashes of
+   * inputDefs/transitions/initVars/verifiers/actions) plus the signer's current
+   * nonce + deadline.
+   *
+   * A permit for `createAgreementDeterministicWithPermit` is a different typed
+   * message; sign it with `createDeterministicPermitSignature`.
    *
    * @param walletClient - viem WalletClient to sign typed data (must be connected to an account)
    * @param agreement - The agreement JSON definition
@@ -426,81 +504,84 @@ export class AgreementFactory {
     }
 
     const signerAddress = account.address as Hex;
-    const nonce = await this.getNonce(signerAddress);
+    const fields = await this.permitFields(signerAddress, agreement, deadline, options);
 
-    const params = transformAgreementToOnChainParams(
-      agreement,
-      options?.docUri,
-      options?.initValues,
-    );
-    const verifiers = options?.verifiers ?? params.verifiers;
-
-    const inputDefsHash = this.hashInputDefs(params.inputDefs);
-    const transitionsHash = this.hashTransitions(params.transitions);
-    const initVarsHash = this.hashInitVars(params.initVars);
-    const verifiersHash = this.hashVerifiers(verifiers);
-    const actionsHash = this.hashActions(params.actions);
-
-    const chainId = await this.clients.publicClient.getChainId();
-    const domain = {
-      name: "AgreementFactory",
-      version: "1",
-      chainId,
-      verifyingContract: this.config.factoryAddress,
-    } as const;
-
-    const types = {
-      PermitAgreementWithActions: [
-        { name: "docUri", type: "string" },
-        { name: "docHash", type: "bytes32" },
-        { name: "initialState", type: "bytes32" },
-        { name: "inputDefsHash", type: "bytes32" },
-        { name: "transitionsHash", type: "bytes32" },
-        { name: "initVarsHash", type: "bytes32" },
-        { name: "verifiersHash", type: "bytes32" },
-        { name: "actionsHash", type: "bytes32" },
-        { name: "nonce", type: "uint256" },
-        { name: "deadline", type: "uint256" },
-      ],
-    } as const;
-
-    const message = {
-      docUri: params.docUri,
-      docHash: params.docHash,
-      initialState: params.initialState,
-      inputDefsHash,
-      transitionsHash,
-      initVarsHash,
-      verifiersHash,
-      actionsHash,
-      nonce,
-      deadline: BigInt(deadline),
-    } as const;
-
-    // Optional sanity check: ensure our local typehash matches the contract's constant.
-    // (If this ever fails, the permit string in PERMIT_WITH_ACTIONS_TYPE is wrong.)
-    if (!PERMIT_WITH_ACTIONS_TYPEHASH) {
-      throw new Error("PERMIT_WITH_ACTIONS_TYPEHASH not initialized");
-    }
-
-    const signatureHex = await walletClient.signTypedData({
+    const signature = await walletClient.signTypedData({
       account,
-      domain,
-      types,
+      domain: fields.domain,
+      types: { PermitAgreementWithActions: PERMIT_WITH_ACTIONS_FIELDS },
       primaryType: "PermitAgreementWithActions",
-      message,
+      message: {
+        ...fields.agreementFields,
+        nonce: fields.nonce,
+        deadline: fields.deadline,
+      },
     });
 
-    const r = `0x${signatureHex.slice(2, 66)}` as Hex;
-    const s = `0x${signatureHex.slice(66, 130)}` as Hex;
-    const v = parseInt(signatureHex.slice(130, 132), 16);
+    return { signature, signerAddress };
+  }
 
-    return { signature: { v, r, s }, signerAddress };
+  /**
+   * Create an EIP-712 permit signature for creating an agreement at a
+   * deterministic address with `createAgreementDeterministicWithPermit`.
+   *
+   * In addition to everything `createPermitSignature` binds, the permit binds
+   * the salt and the exact clone address the factory derives for this signer
+   * and salt (`predictAddress(signerAddress, salt)`).
+   *
+   * @param walletClient - viem WalletClient to sign typed data (must be connected to an account)
+   * @param agreement - The agreement JSON definition
+   * @param salt - The signer's salt for deterministic address derivation
+   * @param deadline - Unix timestamp when the permit expires
+   * @param options - Optional configuration (docUri + initValues)
+   */
+  async createDeterministicPermitSignature(
+    walletClient: WalletClient,
+    agreement: AgreementJson,
+    salt: Hex,
+    deadline: number,
+    options?: CreateAgreementOptions,
+  ): Promise<{
+    signature: CreateAgreementPermitSignature;
+    signerAddress: Hex;
+  }> {
+    const account = walletClient.account;
+    if (!account) {
+      throw new Error("WalletClient must be connected to an account to sign typed data");
+    }
+
+    const signerAddress = account.address as Hex;
+    const [fields, predictedAgreement] = await Promise.all([
+      this.permitFields(signerAddress, agreement, deadline, options),
+      this.predictAddress(signerAddress, salt),
+    ]);
+
+    const signature = await walletClient.signTypedData({
+      account,
+      domain: fields.domain,
+      types: { PermitDeterministicAgreementWithActions: DETERMINISTIC_PERMIT_WITH_ACTIONS_FIELDS },
+      primaryType: "PermitDeterministicAgreementWithActions",
+      message: {
+        ...fields.agreementFields,
+        salt,
+        predictedAgreement,
+        nonce: fields.nonce,
+        deadline: fields.deadline,
+      },
+    });
+
+    return { signature, signerAddress };
   }
 
   /**
    * Create a new agreement using a permit signature, allowing a submitter to create
    * on behalf of the signer (the signer becomes the agreement owner).
+   *
+   * @param signer - The address the permit names (an EOA, or an ERC-1271 signer contract)
+   * @param agreement - The agreement JSON definition
+   * @param deadline - Unix timestamp when the permit expires (must be the signed value)
+   * @param signature - The permit signature bytes, from `createPermitSignature`
+   * @param options - Optional configuration (must match what was signed)
    */
   async createAgreementWithPermit(
     signer: Hex,
@@ -540,9 +621,7 @@ export class AgreementFactory {
           verifiers,
           params.actions,
           BigInt(deadline),
-          signature.v,
-          signature.r,
-          signature.s,
+          signature,
         ]);
 
         const receipt = await executeTransaction(
@@ -564,8 +643,11 @@ export class AgreementFactory {
   /**
    * Create a new agreement at a deterministic address
    * 
+   * The address is derived from the caller and the salt, so it is the address
+   * `predictAddress(callerAddress, salt)` returns and no other account can deploy to it.
+   *
    * @param agreement - The agreement JSON definition
-   * @param salt - Salt for deterministic address derivation
+   * @param salt - Salt for deterministic address derivation, scoped to the caller
    * @param options - Optional configuration
    * @param options.docUri - Custom document URI (defaults to ipfs://agreement/{id})
    * @param options.initValues - Initialization values for variables referenced in initialize.data
@@ -641,7 +723,17 @@ export class AgreementFactory {
 
   /**
    * Create a new deterministic agreement using a permit signature.
-   * Note: The on-chain permit does NOT bind the salt; the signature authorizes the agreement params.
+   *
+   * The permit binds the signer, the agreement parameters, the salt and the clone
+   * address the factory derives for that signer and salt, so the agreement is
+   * deployed at `predictAddress(signer, salt)`.
+   *
+   * @param signer - The address the permit names (an EOA, or an ERC-1271 signer contract)
+   * @param salt - The signer's salt (must be the signed value)
+   * @param agreement - The agreement JSON definition
+   * @param deadline - Unix timestamp when the permit expires (must be the signed value)
+   * @param signature - The permit signature bytes, from `createDeterministicPermitSignature`
+   * @param options - Optional configuration (must match what was signed)
    */
   async createAgreementDeterministicWithPermit(
     signer: Hex,
@@ -683,9 +775,7 @@ export class AgreementFactory {
           verifiers,
           params.actions,
           BigInt(deadline),
-          signature.v,
-          signature.r,
-          signature.s,
+          signature,
         ]);
 
         const receipt = await executeTransaction(
@@ -706,8 +796,13 @@ export class AgreementFactory {
 
   /**
    * Predict the address of a deterministic agreement before deployment
+   *
+   * Deterministic addresses are scoped to their creator: the same salt gives
+   * a different address for a different creator.
    * 
-   * @param salt The salt that will be used for deployment
+   * @param creator The account the address is reserved for: the caller of
+   *        `createAgreementDeterministic`, or the signer of a deterministic permit
+   * @param salt The creator's salt that will be used for deployment
    * @returns The predicted agreement address
    * 
    * @example
@@ -716,15 +811,15 @@ export class AgreementFactory {
    *   { factoryAddress: "0x..." },
    *   { publicClient, walletClient }
    * );
-   * const predictedAddress = await factory.predictAddress("0x1234...");
+   * const predictedAddress = await factory.predictAddress(creatorAddress, "0x1234...");
    * ```
    */
-  async predictAddress(salt: Hex): Promise<Hex> {
+  async predictAddress(creator: Hex, salt: Hex): Promise<Hex> {
     return await readContractResult<typeof factoryAbi, 'predictAddress', Hex>(this.clients.publicClient, {
       address: this.config.factoryAddress,
       abi: factoryAbi,
       functionName: 'predictAddress',
-      args: [salt],
+      args: [creator, salt],
     });
   }
 

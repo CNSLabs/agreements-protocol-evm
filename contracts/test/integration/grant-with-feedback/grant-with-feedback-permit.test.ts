@@ -576,5 +576,180 @@ describe("AgreementEngine (integration) - grant-with-feedback FSM with Permits",
         expect(error.message).to.include("InvalidSignature");
       }
     });
+
+    it("retires a permit signed up front when its signer then submits an input directly", async () => {
+      const [grantor, recipient] = await ethers.getSigners();
+      const { factory: deployedFactory } = await deployProtocol();
+      const factoryAddress = await deployedFactory.getAddress();
+      const { publicClient: grantorPublic, walletClient: grantorWallet } =
+        await createViemClientsForSigner(grantor);
+      const { publicClient: recipientPublic, walletClient: recipientWallet } =
+        await createViemClientsForSigner(recipient);
+      const factory = new AgreementFactoryClass(
+        { factoryAddress: factoryAddress as `0x${string}` },
+        { walletClient: grantorWallet, publicClient: grantorPublic }
+      );
+
+      const { address: agreementAddress } = await factory.createAgreement(grantWithFeedback, {
+        initValues: {
+          grantorEthAddress: grantor.address as Address,
+          recipientEthAddress: recipient.address as Address,
+        }
+      });
+
+      const agreement = new AgreementEngineClass(
+        agreementAddress,
+        grantorPublic,
+        grantorWallet
+      );
+      const agreementAsRecipient = new AgreementEngineClass(
+        agreementAddress,
+        recipientPublic,
+        recipientWallet
+      );
+
+      await agreement.submitInput(grantWithFeedback, "grantorData", sampleInputs.grantorData);
+
+      // The recipient signs a work submission early, while the agreement still
+      // waits for the recipient's signature.
+      const deadline = Math.floor(Date.now() / 1000) + 3600;
+      const earlyPermit = await createRecipientPermit(
+        agreementAddress,
+        recipient,
+        "workSubmission",
+        sampleInputs.workSubmission,
+        deadline
+      );
+
+      // Both parties sign directly. An accepted direct input consumes its
+      // sender's permit nonce, and only its sender's.
+      await agreementAsRecipient.submitInput(grantWithFeedback, "recipientSigning", sampleInputs.recipientSigning);
+      expect(await agreement.getNonce(recipient.address as `0x${string}`)).to.equal(1n);
+      const grantorNonce = await agreement.getNonce(grantor.address as `0x${string}`);
+      await agreement.submitInput(grantWithFeedback, "grantorSigning", sampleInputs.grantorSigning);
+      expect(await agreement.getCurrentState(grantWithFeedback)).to.equal("AWAITING_WORK_SUBMISSION");
+      expect(await agreement.getNonce(recipient.address as `0x${string}`)).to.equal(1n);
+      expect(await agreement.getNonce(grantor.address as `0x${string}`)).to.equal(grantorNonce + 1n);
+
+      // The agreement now accepts workSubmission, but the early permit was
+      // retired by the recipient's own direct input.
+      try {
+        await agreement.submitInputWithPermit(
+          earlyPermit.signerAddress,
+          grantWithFeedback,
+          "workSubmission",
+          sampleInputs.workSubmission,
+          deadline,
+          earlyPermit.signature
+        );
+        expect.fail("Expected transaction to revert with InvalidSignature");
+      } catch (error: any) {
+        expect(error.message).to.include("InvalidSignature");
+      }
+      expect(await agreement.getCurrentState(grantWithFeedback)).to.equal("AWAITING_WORK_SUBMISSION");
+
+      // A permit signed now reads the recipient's new nonce and is accepted.
+      const freshPermit = await createRecipientPermit(
+        agreementAddress,
+        recipient,
+        "workSubmission",
+        sampleInputs.workSubmission,
+        deadline
+      );
+      await agreement.submitInputWithPermit(
+        freshPermit.signerAddress,
+        grantWithFeedback,
+        "workSubmission",
+        sampleInputs.workSubmission,
+        deadline,
+        freshPermit.signature
+      );
+      expect(await agreement.getCurrentState(grantWithFeedback)).to.equal("WORK_IN_REVIEW");
+      expect(await agreement.getNonce(recipient.address as `0x${string}`)).to.equal(2n);
+
+      // It is single-use: the recipient's nonce has moved on.
+      try {
+        await agreement.submitInputWithPermit(
+          freshPermit.signerAddress,
+          grantWithFeedback,
+          "workSubmission",
+          sampleInputs.workSubmission,
+          deadline,
+          freshPermit.signature
+        );
+        expect.fail("Expected transaction to revert with InvalidSignature");
+      } catch (error: any) {
+        expect(error.message).to.include("InvalidSignature");
+      }
+    });
+
+    it("a signer withdraws an unsubmitted permit with cancelPermits", async () => {
+      const [grantor, recipient] = await ethers.getSigners();
+      const { factory: deployedFactory } = await deployProtocol();
+      const factoryAddress = await deployedFactory.getAddress();
+      const { publicClient: grantorPublic, walletClient: grantorWallet } =
+        await createViemClientsForSigner(grantor);
+      const { publicClient: recipientPublic, walletClient: recipientWallet } =
+        await createViemClientsForSigner(recipient);
+      const factory = new AgreementFactoryClass(
+        { factoryAddress: factoryAddress as `0x${string}` },
+        { walletClient: grantorWallet, publicClient: grantorPublic }
+      );
+      const { address: agreementAddress } = await factory.createAgreement(grantWithFeedback, {
+        initValues: {
+          grantorEthAddress: grantor.address as Address,
+          recipientEthAddress: recipient.address as Address,
+        }
+      });
+      const agreement = new AgreementEngineClass(agreementAddress, grantorPublic, grantorWallet);
+      const agreementAsRecipient = new AgreementEngineClass(agreementAddress, recipientPublic, recipientWallet);
+      await agreement.submitInput(grantWithFeedback, "grantorData", sampleInputs.grantorData);
+
+      const deadline = Math.floor(Date.now() / 1000) + 3600;
+      const withdrawn = await createRecipientPermit(
+        agreementAddress,
+        recipient,
+        "recipientSigning",
+        sampleInputs.recipientSigning,
+        deadline
+      );
+      const grantorNonce = await agreement.getNonce(grantor.address as `0x${string}`);
+      await agreementAsRecipient.cancelPermits(true);
+      expect(await agreement.getNonce(recipient.address as `0x${string}`)).to.equal(1n);
+      // The recipient's cancellation does not move the grantor's nonce.
+      expect(await agreement.getNonce(grantor.address as `0x${string}`)).to.equal(grantorNonce);
+
+      try {
+        await agreement.submitInputWithPermit(
+          withdrawn.signerAddress,
+          grantWithFeedback,
+          "recipientSigning",
+          sampleInputs.recipientSigning,
+          deadline,
+          withdrawn.signature
+        );
+        expect.fail("Expected transaction to revert with InvalidSignature");
+      } catch (error: any) {
+        expect(error.message).to.include("InvalidSignature");
+      }
+
+      // A permit signed after the cancellation carries the new nonce and is accepted.
+      const fresh = await createRecipientPermit(
+        agreementAddress,
+        recipient,
+        "recipientSigning",
+        sampleInputs.recipientSigning,
+        deadline
+      );
+      await agreement.submitInputWithPermit(
+        fresh.signerAddress,
+        grantWithFeedback,
+        "recipientSigning",
+        sampleInputs.recipientSigning,
+        deadline,
+        fresh.signature
+      );
+      expect(await agreement.getNonce(recipient.address as `0x${string}`)).to.equal(2n);
+    });
   });
 });
