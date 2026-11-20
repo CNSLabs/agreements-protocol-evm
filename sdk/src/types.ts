@@ -52,6 +52,14 @@ export enum Op {
   // Sender operations
   SENDER_EQ_VAR_ADDRESS = 16,
   SENDER_IN_ALLOWED_ADDRESSES = 17,
+
+  // UINT256 operations - compare with a stored variable plus or minus a constant.
+  // bytesArg is abi.encode(bytes32 targetFieldId, int256 offset).
+  UINT_EQ_VAR_OFFSET = 18,
+  UINT_GT_VAR_OFFSET = 19,
+  UINT_GTE_VAR_OFFSET = 20,
+  UINT_LT_VAR_OFFSET = 21,
+  UINT_LTE_VAR_OFFSET = 22,
 }
 
 /**
