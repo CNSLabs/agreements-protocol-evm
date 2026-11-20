@@ -24,11 +24,19 @@ import {
   InputFieldMetadata,
   type ExecutionAction,
   type ActionInit,
+  type InputTimeWindow,
 } from "./types.js";
 import { encodeFieldValue } from "./payload-builder.js";
 
 const ZERO_BYTES32 =
   "0x0000000000000000000000000000000000000000000000000000000000000000" as Hex;
+
+/**
+ * The field name the V1.1 engine reserves for the block time. A condition on
+ * this field compares `block.timestamp` instead of a submitted value, and the
+ * engine refuses an agreement that declares a field or stored variable with it.
+ */
+const BLOCK_TIME_FIELD_NAME = "block.timestamp";
 
 /**
  * Supported value types for initialization variables
@@ -95,7 +103,11 @@ export function transformAgreementToOnChainParams(
   const initVars = buildInitVars(requiredInitVars, initValues || {});
 
   // 6. Transform inputs to InputDefs (all inputs treated uniformly now)
-  const inputDefs = transformInputs(execution.inputs, agreement.variables);
+  const inputDefs = transformInputs(
+    execution.inputs,
+    agreement.variables,
+    requiredInitVars.map((v) => v.name)
+  );
 
   // 7. Transform transitions
   const transitions = transformTransitions(execution.transitions);
@@ -163,11 +175,18 @@ export function buildInitVars(
 /**
  * Transform the execution.inputs object into InputDef[] array
  * All inputs are processed uniformly - conditions based on issuer field
+ *
+ * @param storedVariables - Names of the variables the agreement stores at
+ *   creation (those in `execution.initialize.data`). Needed only when an input
+ *   has a `time` bound that names a variable.
  */
 export function transformInputs(
   inputs: AgreementJson["execution"]["inputs"],
-  variables: AgreementJson["variables"]
+  variables: AgreementJson["variables"],
+  storedVariables?: Iterable<string>
 ): InputDef[] {
+  const stored = storedVariables === undefined ? undefined : new Set(storedVariables);
+
   return Object.entries(inputs).map(([inputKey, inputDef]) => {
     const id = keccak256(stringToHex(inputKey)) as Hex;
 
@@ -208,6 +227,7 @@ export function transformInputs(
     }
 
     conditions.push(...buildIssuerConditions(inputDef.issuer, variables));
+    conditions.push(...buildTimeConditions(inputKey, inputDef.time, variables, stored));
 
     return {
       id,
@@ -347,6 +367,12 @@ function resolveInputFieldMetadata(
   variables: AgreementJson["variables"]
 ): InputFieldMetadata {
   const varName = extractVariableName(fieldRef);
+  if ((varName || fieldKey) === BLOCK_TIME_FIELD_NAME) {
+    throw new Error(
+      `'${BLOCK_TIME_FIELD_NAME}' is reserved for the block time and cannot be an input field. ` +
+      `To limit when an input is accepted, give the input a 'time' window.`
+    );
+  }
   const varDef = varName ? variables[varName] : null;
   const varType = varDef?.type ?? getInlineVariableType(fieldRef);
   const validation = varDef?.validation ?? getInlineValidation(fieldRef);
@@ -422,6 +448,134 @@ function buildIssuerConditions(
       ) as Hex,
     },
   ];
+}
+
+const TIME_BOUNDS = {
+  // The input is accepted from the moment on: block time >= moment.
+  notBefore: { fixed: Op.UINT_GTE_CONST, stored: Op.UINT_GTE_VAR },
+  // The input is accepted until the moment: block time < moment.
+  before: { fixed: Op.UINT_LT_CONST, stored: Op.UINT_LT_VAR },
+} as const;
+
+const ISO_DATE_TIME_WITH_ZONE =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/;
+
+/**
+ * Seconds since 1970-01-01 UTC for a fixed moment in a `time` window.
+ */
+function parseFixedMoment(inputKey: string, bound: string, value: unknown): bigint {
+  const where = `Input '${inputKey}': time.${bound}`;
+  if (typeof value === "number") {
+    if (!Number.isSafeInteger(value) || value < 0) {
+      throw new Error(`${where} must be a whole number of seconds since 1970-01-01 UTC, received ${value}`);
+    }
+    return BigInt(value);
+  }
+  if (typeof value !== "string") {
+    throw new Error(`${where} must be a number of seconds, an ISO 8601 date-time or a variable reference`);
+  }
+  if (/^\d+$/.test(value)) {
+    return BigInt(value);
+  }
+  // A date-time without a zone would mean a different moment on each machine.
+  const ms = ISO_DATE_TIME_WITH_ZONE.test(value) ? Date.parse(value) : NaN;
+  if (Number.isNaN(ms) || ms < 0) {
+    throw new Error(
+      `${where} '${value}' is not a moment the SDK can read. Use seconds since 1970-01-01 UTC, ` +
+      `an ISO 8601 date-time with a zone such as '2027-03-01T00:00:00Z', or '\${variables.name}'.`
+    );
+  }
+  if (ms % 1000 !== 0) {
+    throw new Error(`${where} '${value}' has a fraction of a second; the contract compares whole seconds`);
+  }
+  return BigInt(ms / 1000);
+}
+
+/**
+ * Conditions for an input's `time` window. Each compares the block time, which
+ * the engine reads in place of a submitted field when a condition names the
+ * reserved block-time field.
+ */
+function buildTimeConditions(
+  inputKey: string,
+  time: InputTimeWindow | undefined,
+  variables: AgreementJson["variables"],
+  storedVariables: Set<string> | undefined
+): Condition[] {
+  if (time === undefined) {
+    return [];
+  }
+  if (typeof time !== "object" || time === null || Array.isArray(time)) {
+    throw new Error(`Input '${inputKey}': 'time' must be an object with 'notBefore', 'before' or both`);
+  }
+  const unknown = Object.keys(time).filter((key) => !(key in TIME_BOUNDS));
+  if (unknown.length > 0) {
+    throw new Error(
+      `Input '${inputKey}': unknown time bound '${unknown[0]}'. Use 'notBefore' (accepted from that moment on) ` +
+      `or 'before' (accepted until that moment).`
+    );
+  }
+
+  const fieldId = fieldToBytes32(BLOCK_TIME_FIELD_NAME);
+  const conditions: Condition[] = [];
+  const fixed: { notBefore?: bigint; before?: bigint } = {};
+
+  for (const bound of ["notBefore", "before"] as const) {
+    const value = time[bound];
+    if (value === undefined) {
+      continue;
+    }
+    const varName = extractVariableName(value);
+    if (!varName) {
+      const seconds = parseFixedMoment(inputKey, bound, value);
+      fixed[bound] = seconds;
+      conditions.push({
+        op: TIME_BOUNDS[bound].fixed,
+        fieldId,
+        bytesArg: encodeAbiParameters([{ type: "uint256" }], [seconds]) as Hex,
+      });
+      continue;
+    }
+
+    const where = `Input '${inputKey}': time.${bound}`;
+    const varDef = variables[varName];
+    if (!varDef) {
+      throw new Error(`${where} references unknown variable '${varName}'`);
+    }
+    if (varDef.type !== "uint256") {
+      throw new Error(
+        `${where}: variable '${varName}' must be type 'uint256' holding seconds since 1970-01-01 UTC, ` +
+        `received '${varDef.type}'`
+      );
+    }
+    if (storedVariables === undefined) {
+      throw new Error(
+        `${where} names variable '${varName}', and transformInputs was not told which variables the agreement ` +
+        `stores. Pass the names in execution.initialize.data, or use transformAgreementToOnChainParams.`
+      );
+    }
+    if (!storedVariables.has(varName)) {
+      throw new Error(
+        `${where}: variable '${varName}' is not stored when the agreement is created, so the input could never ` +
+        `be accepted. List it in execution.initialize.data.`
+      );
+    }
+    conditions.push({
+      op: TIME_BOUNDS[bound].stored,
+      fieldId,
+      bytesArg: fieldToBytes32(varName),
+    });
+  }
+
+  if (conditions.length === 0) {
+    throw new Error(`Input '${inputKey}': 'time' needs 'notBefore', 'before' or both`);
+  }
+  if (fixed.notBefore !== undefined && fixed.before !== undefined && fixed.notBefore >= fixed.before) {
+    throw new Error(
+      `Input '${inputKey}': time.notBefore is not earlier than time.before, so the input could never be accepted`
+    );
+  }
+  return conditions;
 }
 
 /**

@@ -69,6 +69,18 @@ contracts. The names exported from the package root are the same as in 0.1.4.
   account's permit nonce, must be sent by the signer itself, and affects no
   other signer or agreement.
 - `AgreementFactory.createDeterministicPermitSignature`, described above.
+- **Time windows on inputs.** An input in the agreement JSON can carry
+  `time: { notBefore, before }`. `notBefore` accepts the input at that moment
+  and after it; `before` accepts it only before that moment. Each bound is a
+  fixed moment (seconds since 1970-01-01 UTC, or an ISO 8601 date-time with a
+  zone) or `"${variables.name}"`, a `uint256` variable that holds seconds and is
+  listed in `execution.initialize.data`. The transform turns the window into
+  conditions on the block time, which the V1.1 engine reads when the input is
+  submitted, directly or by permit. A window that could never be met, a bound
+  the SDK does not know and a date-time without a zone are refused when the
+  agreement is transformed. `transformInputs` takes an optional third argument,
+  the names of the variables stored at creation; it is needed only when a bound
+  names a variable. `agreements/delivery-deadline` is an example.
 
 ### Limits
 
@@ -76,6 +88,10 @@ contracts. The names exported from the package root are the same as in 0.1.4.
   ETH, so the contracts refuse to create an agreement whose action carries a
   non-zero `value` (`ActionValueNotSupported`), and the SDK refuses to build
   one. Token transfers and other calls with no ETH value are unaffected.
+- **`block.timestamp` is a reserved field name.** The engine reads the block
+  time for a condition on that field, so an agreement cannot declare an input
+  field or a stored variable with it (`ReservedFieldId`), and the SDK refuses
+  to build one.
 - **An action's target must be a deployed contract when its transition runs.**
   If the target address has no code, the input reverts with
   `ActionTargetHasNoCode` and the state does not move. The target may be
