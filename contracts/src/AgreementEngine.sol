@@ -1047,54 +1047,44 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
 
     /**
      * @notice Helper to convert Op enum to string for error messages.
+     * @dev Every branch names the enum member it stands for, so the name stays
+     *      right when the enum changes.
      */
     function _opToString(Op op) internal pure returns (string memory) {
-        if (op == Op.SENDER_EQ_VAR_ADDRESS) {
-            return "SENDER_EQ_VAR_ADDRESS";
-        }
-        if (op == Op.SENDER_IN_ALLOWED_ADDRESSES) {
-            return "SENDER_IN_ALLOWED_ADDRESSES";
-        }
-
-        uint8 opValue = uint8(op);
-        
-        if (opValue <= 2) {
-            return _getStringOpName(opValue);
-        } else if (opValue <= 7) {
-            return _getUintConstOpName(opValue);
-        } else if (opValue <= 12) {
-            return _getUintVarOpName(opValue);
-        } else if (opValue <= 14) {
-            return _getAddressOpName(opValue);
-        }
+        if (op <= Op.STRING_EQ_VAR) return _getStringOpName(op);
+        if (op <= Op.UINT_LTE_CONST) return _getUintConstOpName(op);
+        if (op <= Op.UINT_LTE_VAR) return _getUintVarOpName(op);
+        if (op <= Op.ADDRESS_EQ_VAR) return _getAddressOpName(op);
+        if (op == Op.SENDER_EQ_VAR_ADDRESS) return "SENDER_EQ_VAR_ADDRESS";
+        if (op == Op.SENDER_IN_ALLOWED_ADDRESSES) return "SENDER_IN_ALLOWED_ADDRESSES";
         return "UNKNOWN_OPERATION";
     }
 
-    function _getStringOpName(uint8 opValue) private pure returns (string memory) {
-        if (opValue == 0) return "STRING_MIN_LENGTH";
-        if (opValue == 1) return "STRING_MAX_LENGTH";
-        if (opValue == 2) return "STRING_EQ_CONST";
+    function _getStringOpName(Op op) private pure returns (string memory) {
+        if (op == Op.STRING_MIN_LENGTH) return "STRING_MIN_LENGTH";
+        if (op == Op.STRING_MAX_LENGTH) return "STRING_MAX_LENGTH";
+        if (op == Op.STRING_EQ_CONST) return "STRING_EQ_CONST";
         return "STRING_EQ_VAR";
     }
 
-    function _getUintConstOpName(uint8 opValue) private pure returns (string memory) {
-        if (opValue == 3) return "UINT_EQ_CONST";
-        if (opValue == 4) return "UINT_GT_CONST";
-        if (opValue == 5) return "UINT_GTE_CONST";
-        if (opValue == 6) return "UINT_LT_CONST";
+    function _getUintConstOpName(Op op) private pure returns (string memory) {
+        if (op == Op.UINT_EQ_CONST) return "UINT_EQ_CONST";
+        if (op == Op.UINT_GT_CONST) return "UINT_GT_CONST";
+        if (op == Op.UINT_GTE_CONST) return "UINT_GTE_CONST";
+        if (op == Op.UINT_LT_CONST) return "UINT_LT_CONST";
         return "UINT_LTE_CONST";
     }
 
-    function _getUintVarOpName(uint8 opValue) private pure returns (string memory) {
-        if (opValue == 8) return "UINT_EQ_VAR";
-        if (opValue == 9) return "UINT_GT_VAR";
-        if (opValue == 10) return "UINT_GTE_VAR";
-        if (opValue == 11) return "UINT_LT_VAR";
+    function _getUintVarOpName(Op op) private pure returns (string memory) {
+        if (op == Op.UINT_EQ_VAR) return "UINT_EQ_VAR";
+        if (op == Op.UINT_GT_VAR) return "UINT_GT_VAR";
+        if (op == Op.UINT_GTE_VAR) return "UINT_GTE_VAR";
+        if (op == Op.UINT_LT_VAR) return "UINT_LT_VAR";
         return "UINT_LTE_VAR";
     }
 
-    function _getAddressOpName(uint8 opValue) private pure returns (string memory) {
-        if (opValue == 13) return "ADDRESS_EQ_CONST";
+    function _getAddressOpName(Op op) private pure returns (string memory) {
+        if (op == Op.ADDRESS_EQ_CONST) return "ADDRESS_EQ_CONST";
         return "ADDRESS_EQ_VAR";
     }
 

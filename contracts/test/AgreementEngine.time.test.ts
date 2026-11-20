@@ -3,7 +3,7 @@
 // Time conditions. A condition whose field id is the reserved block-time id
 // compares the block time, in seconds, where it would otherwise compare a
 // submitted field. These tests fix the exact second at which each comparison
-// turns, on both submission paths.
+// turns, on both submission paths, and the name a refusal reports.
 
 import { expect } from "chai";
 import { ethers } from "hardhat";
@@ -130,7 +130,9 @@ describe("AgreementEngine time conditions", function () {
       const opensAt = now + 100;
       const agreement = await create([input("start", [atFixedMoment(Op.UINT_GTE_CONST, opensAt)])], stayOpen("start"));
 
-      await expect(submitAt(agreement, opensAt - 1, "start")).to.be.revertedWithCustomError(implementation, "ComparisonFailed");
+      await expect(submitAt(agreement, opensAt - 1, "start"))
+        .to.be.revertedWithCustomError(implementation, "ComparisonFailed")
+        .withArgs("UINT_GTE_CONST", "UINT256");
       expect(await agreement.nonces(party.address)).to.equal(0n);
 
       await expect(submitAt(agreement, opensAt, "start")).to.emit(agreement, "InputAccepted");
@@ -143,7 +145,9 @@ describe("AgreementEngine time conditions", function () {
       const agreement = await create([input("file", [atFixedMoment(Op.UINT_LT_CONST, closesAt)])], stayOpen("file"));
 
       await expect(submitAt(agreement, closesAt - 1, "file")).to.emit(agreement, "InputAccepted");
-      await expect(submitAt(agreement, closesAt, "file")).to.be.revertedWithCustomError(implementation, "ComparisonFailed");
+      await expect(submitAt(agreement, closesAt, "file"))
+        .to.be.revertedWithCustomError(implementation, "ComparisonFailed")
+        .withArgs("UINT_LT_CONST", "UINT256");
       await expect(submitAt(agreement, closesAt + 1, "file")).to.be.revertedWithCustomError(implementation, "ComparisonFailed");
       expect(await agreement.nonces(party.address)).to.equal(1n);
     });
@@ -199,9 +203,13 @@ describe("AgreementEngine time conditions", function () {
         [numberField("dueDate", dueDate)]
       );
 
-      await expect(submitAt(agreement, dueDate - 2, "declareOverdue")).to.be.revertedWithCustomError(implementation, "ComparisonFailed");
+      await expect(submitAt(agreement, dueDate - 2, "declareOverdue"))
+        .to.be.revertedWithCustomError(implementation, "ComparisonFailed")
+        .withArgs("UINT_GTE_VAR", "UINT256");
       await expect(submitAt(agreement, dueDate - 1, "submitReport")).to.emit(agreement, "InputAccepted");
-      await expect(submitAt(agreement, dueDate, "submitReport")).to.be.revertedWithCustomError(implementation, "ComparisonFailed");
+      await expect(submitAt(agreement, dueDate, "submitReport"))
+        .to.be.revertedWithCustomError(implementation, "ComparisonFailed")
+        .withArgs("UINT_LT_VAR", "UINT256");
       expect(await agreement.currentState()).to.equal(OPEN);
 
       await expect(submitAt(agreement, dueDate + 1, "declareOverdue")).to.emit(agreement, "InputAccepted");
