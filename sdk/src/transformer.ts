@@ -25,6 +25,7 @@ import {
   type ExecutionAction,
   type ActionInit,
   type InputTimeWindow,
+  type InputCheck,
 } from "./types.js";
 import { encodeFieldValue } from "./payload-builder.js";
 
@@ -187,6 +188,13 @@ export function transformInputs(
   storedVariables?: Iterable<string>
 ): InputDef[] {
   const stored = storedVariables === undefined ? undefined : new Set(storedVariables);
+  // A variable an input stores can be compared against as well as one stored at creation.
+  const storedByInputs = new Set<string>();
+  for (const [inputKey, inputDef] of Object.entries(inputs)) {
+    for (const key of storedFieldKeys(inputKey, inputDef)) {
+      storedByInputs.add(extractVariableName((inputDef.data || {})[key]) || key);
+    }
+  }
 
   return Object.entries(inputs).map(([inputKey, inputDef]) => {
     const id = keccak256(stringToHex(inputKey)) as Hex;
@@ -195,8 +203,18 @@ export function transformInputs(
     const fields: InputFieldDef[] = [];
     const conditions: Condition[] = [];
     
+    const storeKeys = new Set(storedFieldKeys(inputKey, inputDef));
     for (const [fieldKey, fieldRef] of Object.entries(inputDef.data || {})) {
       const fieldMeta = resolveInputFieldMetadata(fieldKey, fieldRef, variables);
+      if (storeKeys.has(fieldKey)) {
+        if (!fieldMeta.required) {
+          throw new Error(
+            `Input '${inputKey}': stored field '${fieldKey}' must be required. An optional field can be left out, ` +
+            `and the stored value would then not change.`
+          );
+        }
+        fieldMeta.persist = true;
+      }
       const varName = extractVariableName(fieldRef);
       const varDef = varName ? variables[varName] : null;
 
@@ -229,6 +247,7 @@ export function transformInputs(
 
     conditions.push(...buildIssuerConditions(inputDef.issuer, variables));
     conditions.push(...buildTimeConditions(inputKey, inputDef.time, variables, stored));
+    conditions.push(...buildCheckConditions(inputKey, inputDef, variables, stored, storedByInputs));
 
     return {
       id,
@@ -326,9 +345,11 @@ export function getInputFieldMetadata(
     throw new Error(`Input '${inputId}' not found in agreement`);
   }
 
-  return Object.entries(input.data || {}).map(([fieldKey, fieldRef]) =>
-    resolveInputFieldMetadata(fieldKey, fieldRef, agreement.variables)
-  );
+  const storeKeys = new Set(storedFieldKeys(inputId, input));
+  return Object.entries(input.data || {}).map(([fieldKey, fieldRef]) => {
+    const metadata = resolveInputFieldMetadata(fieldKey, fieldRef, agreement.variables);
+    return storeKeys.has(fieldKey) ? { ...metadata, persist: true } : metadata;
+  });
 }
 
 /**
@@ -646,6 +667,157 @@ function buildTimeConditions(
     );
   }
   return conditions;
+}
+
+const CHECK_OPS = {
+  equalTo: { fixed: Op.UINT_EQ_CONST, stored: Op.UINT_EQ_VAR, offset: Op.UINT_EQ_VAR_OFFSET },
+  greaterThan: { fixed: Op.UINT_GT_CONST, stored: Op.UINT_GT_VAR, offset: Op.UINT_GT_VAR_OFFSET },
+  greaterThanOrEqualTo: { fixed: Op.UINT_GTE_CONST, stored: Op.UINT_GTE_VAR, offset: Op.UINT_GTE_VAR_OFFSET },
+  lessThan: { fixed: Op.UINT_LT_CONST, stored: Op.UINT_LT_VAR, offset: Op.UINT_LT_VAR_OFFSET },
+  lessThanOrEqualTo: { fixed: Op.UINT_LTE_CONST, stored: Op.UINT_LTE_VAR, offset: Op.UINT_LTE_VAR_OFFSET },
+} as const;
+const CHECK_KEYS = ["field", "is", "to", "plus", "minus"];
+const own = (object: object, key: string) => Object.prototype.hasOwnProperty.call(object, key);
+
+/** The keys of an input's `data` that its `store` list names. */
+function storedFieldKeys(inputKey: string, inputDef: AgreementJson["execution"]["inputs"][string]): string[] {
+  const store = inputDef.store;
+  if (store === undefined) {
+    return [];
+  }
+  if (!Array.isArray(store)) {
+    throw new Error(`Input '${inputKey}': 'store' must be a list of the input's field names`);
+  }
+  const data = inputDef.data || {};
+  for (const key of store) {
+    if (typeof key !== "string" || !own(data, key)) {
+      throw new Error(`Input '${inputKey}': 'store' names '${String(key)}', which is not a field of this input`);
+    }
+  }
+  if (new Set(store).size !== store.length) {
+    throw new Error(`Input '${inputKey}': 'store' names a field twice`);
+  }
+  return store;
+}
+
+/** A whole number that is not negative, from a number or a string of digits. */
+function wholeNumber(where: string, value: unknown): bigint {
+  if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) {
+    return BigInt(value);
+  }
+  if (typeof value === "string" && /^\d+$/.test(value)) {
+    return BigInt(value);
+  }
+  throw new Error(`${where} must be a whole number that is not negative, received '${String(value)}'`);
+}
+
+/**
+ * Conditions for an input's `checks`: comparisons of a submitted number with a
+ * constant, a stored variable, or a stored variable plus or minus a constant.
+ */
+function buildCheckConditions(
+  inputKey: string,
+  inputDef: AgreementJson["execution"]["inputs"][string],
+  variables: AgreementJson["variables"],
+  storedAtCreation: Set<string> | undefined,
+  storedByInputs: Set<string>
+): Condition[] {
+  const checks = inputDef.checks;
+  if (checks === undefined) {
+    return [];
+  }
+  if (!Array.isArray(checks) || checks.length === 0) {
+    throw new Error(`Input '${inputKey}': 'checks' must be a list with at least one check`);
+  }
+  const data = inputDef.data || {};
+  return checks.map((check: InputCheck, index) => {
+    const where = `Input '${inputKey}': checks[${index}]`;
+    if (typeof check !== "object" || check === null || Array.isArray(check)) {
+      throw new Error(`${where} must be an object with 'field', 'is' and 'to'`);
+    }
+    const unknown = Object.keys(check).filter((key) => !CHECK_KEYS.includes(key));
+    if (unknown.length > 0) {
+      throw new Error(`${where}: unknown key '${unknown[0]}'. A check has 'field', 'is', 'to' and optionally 'plus' or 'minus'.`);
+    }
+    for (const key of ["field", "is", "to"]) {
+      if (!own(check, key)) throw new Error(`${where} needs '${key}'`);
+    }
+
+    // The field being checked.
+    if (typeof check.field !== "string" || !own(data, check.field)) {
+      throw new Error(`${where}: '${String(check.field)}' is not a field of this input`);
+    }
+    const fieldMeta = resolveInputFieldMetadata(check.field, data[check.field], variables);
+    if (fieldMeta.fType !== FieldType.UINT256) {
+      throw new Error(`${where}: field '${check.field}' must be type 'uint256'`);
+    }
+    if (!fieldMeta.required) {
+      throw new Error(
+        `${where}: field '${check.field}' must be required. The contract skips a check on an optional field that is left out.`
+      );
+    }
+
+    // The comparison.
+    if (typeof check.is !== "string" || !own(CHECK_OPS, check.is)) {
+      throw new Error(`${where}: unknown comparison '${String(check.is)}'. Use one of ${Object.keys(CHECK_OPS).join(", ")}.`);
+    }
+    const ops = CHECK_OPS[check.is];
+    const hasPlus = own(check, "plus") && check.plus !== undefined;
+    const hasMinus = own(check, "minus") && check.minus !== undefined;
+    if (hasPlus && hasMinus) {
+      throw new Error(`${where} has both 'plus' and 'minus'; use one`);
+    }
+
+    // What it is compared with.
+    const reference = typeof check.to === "string" ? TIME_VARIABLE_REFERENCE.exec(check.to) : null;
+    if (typeof check.to === "string" && !reference && check.to.includes("${")) {
+      throw new Error(
+        `${where}: 'to' is '${check.to}', which must be exactly one variable reference such as '\${variables.round}'. ` +
+        `Use 'plus' or 'minus' for arithmetic.`
+      );
+    }
+    if (!reference) {
+      if (hasPlus || hasMinus) {
+        throw new Error(`${where}: 'plus' and 'minus' apply to a stored variable; write the constant itself in 'to'`);
+      }
+      const constant = wholeNumber(`${where}: 'to'`, check.to);
+      return { op: ops.fixed, fieldId: fieldMeta.fieldId, bytesArg: encodeAbiParameters([{ type: "uint256" }], [constant]) as Hex };
+    }
+
+    const varName = reference[1];
+    const varDef = variables[varName];
+    if (!varDef) {
+      throw new Error(`${where}: 'to' references unknown variable '${varName}'`);
+    }
+    if (varDef.type !== "uint256") {
+      throw new Error(`${where}: variable '${varName}' must be type 'uint256', received '${varDef.type}'`);
+    }
+    if (storedAtCreation === undefined) {
+      throw new Error(
+        `${where} names variable '${varName}', and transformInputs was not told which variables the agreement ` +
+        `stores. Pass the names in execution.initialize.data, or use transformAgreementToOnChainParams.`
+      );
+    }
+    if (!storedAtCreation.has(varName) && !storedByInputs.has(varName)) {
+      throw new Error(
+        `${where}: variable '${varName}' is never stored, so the input could never be accepted. List it in ` +
+        `execution.initialize.data, or in the 'store' of an input that submits it.`
+      );
+    }
+
+    const amount = hasPlus ? wholeNumber(`${where}: 'plus'`, check.plus) : hasMinus ? wholeNumber(`${where}: 'minus'`, check.minus) : 0n;
+    if (amount === 0n) {
+      return { op: ops.stored, fieldId: fieldMeta.fieldId, bytesArg: fieldToBytes32(varName) };
+    }
+    if (amount >= 2n ** 255n) {
+      throw new Error(`${where}: the amount to add or subtract is too large`);
+    }
+    return {
+      op: ops.offset,
+      fieldId: fieldMeta.fieldId,
+      bytesArg: encodeAbiParameters([{ type: "bytes32" }, { type: "int256" }], [fieldToBytes32(varName), hasMinus ? -amount : amount]) as Hex,
+    };
+  });
 }
 
 /**
