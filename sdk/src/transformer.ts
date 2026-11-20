@@ -108,6 +108,7 @@ export function transformAgreementToOnChainParams(
     agreement.variables,
     requiredInitVars.map((v) => v.name)
   );
+  assertStoredDatesArePlausible(execution.inputs, initValues || {});
 
   // 7. Transform transitions
   const transitions = transformTransitions(execution.transitions);
@@ -458,7 +459,24 @@ const TIME_BOUNDS = {
 } as const;
 
 const ISO_DATE_TIME_WITH_ZONE =
-  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/;
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d+))?)?(Z|[+-]\d{2}:\d{2})$/;
+
+// A bound that names a stored date is exactly one variable reference, nothing around it.
+const TIME_VARIABLE_REFERENCE = /^\$\{variables\.(\w+)(?:\.value)?\}$/;
+
+// Fixed moments and stored dates outside this range are almost always a mistake:
+// milliseconds given as seconds, a date written as digits, or an empty value.
+const EARLIEST_MOMENT = 1_000_000_000n; // 2001-09-09
+const LATEST_MOMENT = 10_000_000_000n; // 2286-11-20
+
+function assertPlausibleMoment(where: string, seconds: bigint): void {
+  if (seconds < EARLIEST_MOMENT || seconds >= LATEST_MOMENT) {
+    throw new Error(
+      `${where} is ${seconds} seconds since 1970-01-01 UTC, which is outside 2001 to 2286. ` +
+      `A moment is given in seconds, not milliseconds, and not as a date written in digits.`
+    );
+  }
+}
 
 /**
  * Seconds since 1970-01-01 UTC for a fixed moment in a `time` window.
@@ -478,17 +496,52 @@ function parseFixedMoment(inputKey: string, bound: string, value: unknown): bigi
     return BigInt(value);
   }
   // A date-time without a zone would mean a different moment on each machine.
-  const ms = ISO_DATE_TIME_WITH_ZONE.test(value) ? Date.parse(value) : NaN;
-  if (Number.isNaN(ms) || ms < 0) {
+  const parts = ISO_DATE_TIME_WITH_ZONE.exec(value);
+  const ms = parts ? Date.parse(value) : NaN;
+  if (!parts || Number.isNaN(ms) || ms < 0) {
     throw new Error(
       `${where} '${value}' is not a moment the SDK can read. Use seconds since 1970-01-01 UTC, ` +
       `an ISO 8601 date-time with a zone such as '2027-03-01T00:00:00Z', or '\${variables.name}'.`
     );
   }
-  if (ms % 1000 !== 0) {
+  if (parts[7] !== undefined && /[1-9]/.test(parts[7])) {
     throw new Error(`${where} '${value}' has a fraction of a second; the contract compares whole seconds`);
   }
+  // Date.parse moves a day that does not exist into the next month. Read the
+  // moment back in the zone it was written in and require the same fields.
+  const zone = parts[8] === "Z" ? 0 : (parts[8][0] === "-" ? -1 : 1) * (Number(parts[8].slice(1, 3)) * 60 + Number(parts[8].slice(4, 6)));
+  const local = new Date(ms + zone * 60_000);
+  const written = [parts[1], parts[2], parts[3], parts[4], parts[5], parts[6] ?? "0"].map(Number);
+  const read = [local.getUTCFullYear(), local.getUTCMonth() + 1, local.getUTCDate(), local.getUTCHours(), local.getUTCMinutes(), local.getUTCSeconds()];
+  if (written.some((field, i) => field !== read[i])) {
+    throw new Error(`${where} '${value}' is not a date and time that exists`);
+  }
   return BigInt(ms / 1000);
+}
+
+/**
+ * A stored date that a time window names is checked when the agreement is
+ * built: an empty value would be stored as 0 and leave the window meaningless.
+ */
+function assertStoredDatesArePlausible(
+  inputs: AgreementJson["execution"]["inputs"],
+  initValues: Record<string, InitValue>
+): void {
+  for (const [inputKey, inputDef] of Object.entries(inputs)) {
+    const time = inputDef.time;
+    if (typeof time !== "object" || time === null) continue;
+    for (const bound of ["notBefore", "before"] as const) {
+      const value = Object.prototype.hasOwnProperty.call(time, bound) ? time[bound] : undefined;
+      const reference = typeof value === "string" ? TIME_VARIABLE_REFERENCE.exec(value) : null;
+      if (!reference) continue;
+      const initValue = initValues[reference[1]];
+      const where = `Input '${inputKey}': time.${bound} names '${reference[1]}', whose value`;
+      if (typeof initValue !== "bigint" && !(typeof initValue === "string" && /^\d+$/.test(initValue))) {
+        throw new Error(`${where} must be a whole number of seconds since 1970-01-01 UTC, received '${String(initValue)}'`);
+      }
+      assertPlausibleMoment(where, BigInt(initValue));
+    }
+  }
 }
 
 /**
@@ -508,7 +561,7 @@ function buildTimeConditions(
   if (typeof time !== "object" || time === null || Array.isArray(time)) {
     throw new Error(`Input '${inputKey}': 'time' must be an object with 'notBefore', 'before' or both`);
   }
-  const unknown = Object.keys(time).filter((key) => !(key in TIME_BOUNDS));
+  const unknown = Object.keys(time).filter((key) => !Object.prototype.hasOwnProperty.call(TIME_BOUNDS, key));
   if (unknown.length > 0) {
     throw new Error(
       `Input '${inputKey}': unknown time bound '${unknown[0]}'. Use 'notBefore' (accepted from that moment on) ` +
@@ -520,14 +573,24 @@ function buildTimeConditions(
   const conditions: Condition[] = [];
   const fixed: { notBefore?: bigint; before?: bigint } = {};
 
+  const stored: { notBefore?: string; before?: string } = {};
   for (const bound of ["notBefore", "before"] as const) {
-    const value = time[bound];
-    if (value === undefined) {
+    // Own properties only: the window is what the hashed document says.
+    if (!Object.prototype.hasOwnProperty.call(time, bound) || time[bound] === undefined) {
       continue;
     }
-    const varName = extractVariableName(value);
+    const value = time[bound];
+    const reference = typeof value === "string" ? TIME_VARIABLE_REFERENCE.exec(value) : null;
+    if (typeof value === "string" && !reference && value.includes("${")) {
+      throw new Error(
+        `Input '${inputKey}': time.${bound} '${value}' must be exactly one variable reference such as ` +
+        `'\${variables.dueDate}'. Arithmetic and text around a reference are not supported.`
+      );
+    }
+    const varName = reference ? reference[1] : "";
     if (!varName) {
       const seconds = parseFixedMoment(inputKey, bound, value);
+      assertPlausibleMoment(`Input '${inputKey}': time.${bound}`, seconds);
       fixed[bound] = seconds;
       conditions.push({
         op: TIME_BOUNDS[bound].fixed,
@@ -560,6 +623,7 @@ function buildTimeConditions(
         `be accepted. List it in execution.initialize.data.`
       );
     }
+    stored[bound] = varName;
     conditions.push({
       op: TIME_BOUNDS[bound].stored,
       fieldId,
@@ -569,6 +633,12 @@ function buildTimeConditions(
 
   if (conditions.length === 0) {
     throw new Error(`Input '${inputKey}': 'time' needs 'notBefore', 'before' or both`);
+  }
+  if (stored.notBefore !== undefined && stored.notBefore === stored.before) {
+    throw new Error(
+      `Input '${inputKey}': time.notBefore and time.before name the same variable '${stored.before}', ` +
+      `so the input could never be accepted`
+    );
   }
   if (fixed.notBefore !== undefined && fixed.before !== undefined && fixed.notBefore >= fixed.before) {
     throw new Error(

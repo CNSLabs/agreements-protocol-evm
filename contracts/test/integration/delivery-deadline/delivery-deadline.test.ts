@@ -5,7 +5,7 @@
 // enforces them on direct inputs and on permits.
 
 import { expect } from "chai";
-import { ethers } from "hardhat";
+import { ethers, network } from "hardhat";
 import { time, takeSnapshot } from "@nomicfoundation/hardhat-toolbox/network-helpers";
 import type { SnapshotRestorer } from "@nomicfoundation/hardhat-toolbox/network-helpers";
 import { loadAgreement, deployProtocol, loadSDKModule, createViemClientsForSigner } from "../test-helpers";
@@ -108,6 +108,47 @@ describe("AgreementEngine (integration) - delivery deadline, time windows", () =
 
     await s.view.submitInputWithPermit(permit.signerAddress, deliveryDeadline, "deliver", NOTE, deadline, permit.signature, true);
     expect(await s.state()).to.equal("DELIVERED");
+  });
+
+  it("the window the SDK builds turns at the due date to the second", async () => {
+    // Four agreements share one due date. Each block carries a delivery on one of
+    // them and a late declaration on another, so both inputs see the same second.
+    const sdkModule = await loadSDKModule();
+    const [supplier, buyer] = await ethers.getSigners();
+    const agreementAt = async (address: string) => ethers.getContractAt("AgreementEngine", address) as Promise<any>;
+    const inputId = (name: string) => ethers.id(name);
+    const deliver = sdkModule.buildInputPayload(deliveryDeadline, "deliver", NOTE);
+    const declareLate = sdkModule.buildInputPayload(deliveryDeadline, "declareLate", LATE);
+    const gas = { gasLimit: 1_000_000 };
+
+    const dueDate = (await time.latest()) + 1000;
+    const relayerClients = await createViemClientsForSigner((await ethers.getSigners())[2]);
+    const factory = new AgreementFactoryClass({ factoryAddress }, relayerClients);
+    const create = async () =>
+      agreementAt(
+        (await factory.createAgreement(deliveryDeadline, { initValues: { supplier: supplier.address, buyer: buyer.address, dueDate: String(dueDate) } })).address
+      );
+    const [a, b, c, d] = [await create(), await create(), await create(), await create()];
+
+    // Mine a delivery on one agreement and a late declaration on another in the same block.
+    const bothAt = async (at: number, delivered: any, declared: any) => {
+      await network.provider.send("evm_setAutomine", [false]);
+      try {
+        const first = await delivered.connect(supplier).submitInput(inputId("deliver"), deliver, gas);
+        const second = await declared.connect(buyer).submitInput(inputId("declareLate"), declareLate, gas);
+        await time.setNextBlockTimestamp(at);
+        await network.provider.send("evm_mine");
+        const [r1, r2] = await Promise.all([first.hash, second.hash].map((hash) => ethers.provider.getTransactionReceipt(hash)));
+        expect((await ethers.provider.getBlock(r1!.blockNumber))!.timestamp).to.equal(at);
+        expect(r2!.blockNumber).to.equal(r1!.blockNumber);
+        return { deliver: r1!.status === 1, declareLate: r2!.status === 1 };
+      } finally {
+        await network.provider.send("evm_setAutomine", [true]);
+      }
+    };
+
+    expect(await bothAt(dueDate - 1, a, b), "one second before the due date").to.deep.equal({ deliver: true, declareLate: false });
+    expect(await bothAt(dueDate, c, d), "at the due date").to.deep.equal({ deliver: false, declareLate: true });
   });
 
   it("a window between two fixed moments, written as ISO date-times", async () => {

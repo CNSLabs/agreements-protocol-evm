@@ -6,7 +6,7 @@
 // turns, on both submission paths, and the name a refusal reports.
 
 import { expect } from "chai";
-import { ethers } from "hardhat";
+import { ethers, network } from "hardhat";
 import { time, takeSnapshot } from "@nomicfoundation/hardhat-toolbox/network-helpers";
 import type { SnapshotRestorer } from "@nomicfoundation/hardhat-toolbox/network-helpers";
 import type { HardhatEthersSigner } from "@nomicfoundation/hardhat-ethers/signers";
@@ -163,6 +163,33 @@ describe("AgreementEngine time conditions", function () {
       await expect(submitAt(agreement, moment - 1, "early")).to.emit(agreement, "InputAccepted");
       await expect(submitAt(agreement, moment, "early")).to.be.revertedWithCustomError(implementation, "ComparisonFailed");
       await expect(submitAt(agreement, moment + 1, "late")).to.emit(agreement, "InputAccepted");
+    });
+
+    it("in one block at the moment itself, 'before' is refused and 'not before' is accepted; one second earlier, the reverse", async function () {
+      const moment = now + 100;
+      const agreement = await create(
+        [input("early", [atFixedMoment(Op.UINT_LT_CONST, moment)]), input("late", [atFixedMoment(Op.UINT_GTE_CONST, moment)])],
+        stayOpen("early", "late")
+      );
+      // Both inputs are mined in the same block, so they see the same second.
+      const bothAt = async (at: number) => {
+        await network.provider.send("evm_setAutomine", [false]);
+        try {
+          const early = await agreement.connect(party).submitInput(id("early"), EMPTY, MINED);
+          const late = await agreement.connect(other).submitInput(id("late"), EMPTY, MINED);
+          await time.setNextBlockTimestamp(at);
+          await network.provider.send("evm_mine");
+          const [earlyReceipt, lateReceipt] = await Promise.all([early.hash, late.hash].map((hash) => ethers.provider.getTransactionReceipt(hash)));
+          expect(earlyReceipt!.blockNumber).to.equal(lateReceipt!.blockNumber);
+          expect((await ethers.provider.getBlock(earlyReceipt!.blockNumber))!.timestamp).to.equal(at);
+          return { early: earlyReceipt!.status === 1, late: lateReceipt!.status === 1 };
+        } finally {
+          await network.provider.send("evm_setAutomine", [true]);
+        }
+      };
+
+      expect(await bothAt(moment - 1)).to.deep.equal({ early: true, late: false });
+      expect(await bothAt(moment)).to.deep.equal({ early: false, late: true });
     });
 
     it("the other number comparisons turn at the second they name", async function () {

@@ -76,9 +76,15 @@ contracts. The names exported from the package root are the same as in 0.1.4.
   zone) or `"${variables.name}"`, a `uint256` variable that holds seconds and is
   listed in `execution.initialize.data`. The transform turns the window into
   conditions on the block time, which the V1.1 engine reads when the input is
-  submitted, directly or by permit. A window that could never be met, a bound
-  the SDK does not know and a date-time without a zone are refused when the
-  agreement is transformed. `transformInputs` takes an optional third argument,
+  submitted, directly or by permit. Refused when the agreement is transformed:
+  a bound the SDK does not know, anything but exactly one variable reference
+  in a bound that names a variable, a date-time without a zone or that does
+  not exist, a moment outside 2001 to 2286, a stored date whose value at
+  creation is not such a moment, and a window that could never be met (fixed
+  bounds in the wrong order, or the same variable on both bounds). An engine
+  from before time conditions, V1.0 included, does not enforce a window, and
+  an SDK from before them ignores `time`: create such an agreement on a V1.1
+  factory with this SDK. `transformInputs` takes an optional third argument,
   the names of the variables stored at creation; it is needed only when a bound
   names a variable. `agreements/delivery-deadline` is an example.
 
