@@ -180,6 +180,17 @@ export const AgreementEngineABI = [
   {
     "inputs": [
       {
+        "internalType": "bytes32",
+        "name": "fieldId",
+        "type": "bytes32"
+      }
+    ],
+    "name": "ReservedFieldId",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
         "internalType": "address",
         "name": "sender",
         "type": "address"

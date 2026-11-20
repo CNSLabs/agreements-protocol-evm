@@ -97,7 +97,8 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
 
     struct Condition {
         Op op;
-        bytes32 fieldId;   // which DataField.id this condition targets (the field being checked)
+        bytes32 fieldId;   // which DataField.id this condition targets (the field being checked),
+                           // or BLOCK_TIME_FIELD to check the block time instead of a submitted field
         bytes bytesArg;    // For CONST ops: constant value encoded. For VAR ops: target fieldId encoded as bytes32
     }
 
@@ -181,6 +182,17 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
     // A signer withdraws an unsubmitted permit with `cancelPermits`.
     mapping(address => uint256) public nonces;
     
+    // Reserved field id for time conditions. A condition whose `fieldId` is this
+    // value compares the block time (`block.timestamp`, in seconds) where it
+    // would otherwise compare a submitted field. Any of the UINT comparisons
+    // applies, against a constant or a stored UINT256 variable, for example
+    // UINT_GTE_VAR for "not before the stored date" and UINT_LT_CONST for
+    // "before a fixed moment". The time is read when the input is submitted,
+    // for a direct input and for a permit alike, so a permit signed inside a
+    // time window is refused once the window has closed. No input field and no
+    // stored variable may use this id.
+    bytes32 internal constant BLOCK_TIME_FIELD = keccak256("block.timestamp");
+
     // EIP-712 typehash for permit. The signer binds its own address, so a
     // signature validated by a smart account cannot be presented for another
     // account that accepts the same key.
@@ -195,6 +207,7 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
     error SenderAddressMismatch(address sender, address expected);
     error SenderAddressNotAllowed(address sender);
     error ComparisonFailed(string op, string fieldType);
+    error ReservedFieldId(bytes32 fieldId);
     error VarNotSet(bytes32 fieldId);
     error TypeMismatch(string expected, string actual);
     error NotInitialized();
@@ -512,6 +525,8 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
 
             // Deep copy fields array
             for (uint256 j = 0; j < src.fields.length; j++) {
+                // A condition on this id reads the block time, never a submitted field.
+                if (src.fields[j].fieldId == BLOCK_TIME_FIELD) revert ReservedFieldId(BLOCK_TIME_FIELD);
                 dst.fields.push(src.fields[j]);
             }
 
@@ -545,6 +560,7 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
         for (uint256 i = 0; i < initVars_.length; i++) {
             DataField calldata iv = initVars_[i];
             require(iv.id != bytes32(0), "InitVar id zero");
+            if (iv.id == BLOCK_TIME_FIELD) revert ReservedFieldId(BLOCK_TIME_FIELD);
 
             // Validate the field can be decoded as the claimed type
             _validateFieldDecoding(iv.data, iv.fType);
@@ -700,6 +716,8 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
 
     /**
      * @notice Validate all conditions defined for this input.
+     * @dev A condition is a sender check, a time check (`fieldId` is
+     *      BLOCK_TIME_FIELD) or a check on a submitted field.
      * @param permitSigner If non-zero, SENDER_EQ_VAR_ADDRESS conditions check this address instead of msg.sender
      */
     function _validateConditions(
@@ -715,6 +733,16 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
             }
             if (c.op == Op.SENDER_IN_ALLOWED_ADDRESSES) {
                 _evalAllowedSenderCondition(c, permitSigner);
+                continue;
+            }
+
+            if (c.fieldId == BLOCK_TIME_FIELD) {
+                // A time condition: the block time stands in for a submitted
+                // UINT256 field and goes through the same comparisons.
+                _evalCondition(
+                    c,
+                    DataField({id: BLOCK_TIME_FIELD, fType: FieldType.UINT256, data: abi.encode(block.timestamp)})
+                );
                 continue;
             }
 
