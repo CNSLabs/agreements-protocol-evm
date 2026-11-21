@@ -87,6 +87,17 @@ contracts. The names exported from the package root are the same as in 0.1.4.
   factory with this SDK. `transformInputs` takes an optional third argument,
   the names of the variables stored at creation; it is needed only when a bound
   names a variable. `agreements/delivery-deadline` is an example.
+- **Checks and stored values on inputs.** An input can carry `checks`, a list
+  of comparisons of one `uint256` field (`equalTo`, `lessThan`,
+  `lessThanOrEqualTo`, `greaterThan`, `greaterThanOrEqualTo`) with a whole
+  number or a stored `uint256` variable, optionally `plus` or `minus` a whole
+  number, and `store`, the fields whose submitted value the agreement keeps.
+  With them an agreement can count rounds and repeat one set of states.
+  A checked or stored field must be required, a variable in a check must be
+  stored at creation or by an input, and a check the SDK cannot read is
+  refused. A check with `plus` or `minus` uses the engine's offset
+  comparisons, which an engine from before them refuses at creation.
+  `agreements/counted-milestones` is an example.
 
 ### Limits
 

@@ -77,7 +77,18 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
         
         // Sender operations
         SENDER_EQ_VAR_ADDRESS,
-        SENDER_IN_ALLOWED_ADDRESSES
+        SENDER_IN_ALLOWED_ADDRESSES,
+
+        // UINT256 operations - compare with a stored variable plus or minus a constant.
+        // bytesArg = abi.encode(bytes32 targetFieldId, int256 offset). These are
+        // separate codes, not a longer argument on the *_VAR codes, so that an
+        // engine from before them refuses the agreement at creation instead of
+        // reading the comparison without its offset.
+        UINT_EQ_VAR_OFFSET,
+        UINT_GT_VAR_OFFSET,
+        UINT_GTE_VAR_OFFSET,
+        UINT_LT_VAR_OFFSET,
+        UINT_LTE_VAR_OFFSET
     }
 
     // ========================================================================
@@ -208,6 +219,7 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
     error SenderAddressNotAllowed(address sender);
     error ComparisonFailed(string op, string fieldType);
     error ReservedFieldId(bytes32 fieldId);
+    error OffsetOutOfRange(bytes32 fieldId, uint256 stored, int256 offset);
     error VarNotSet(bytes32 fieldId);
     error TypeMismatch(string expected, string actual);
     error NotInitialized();
@@ -775,7 +787,7 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
             c.op == Op.STRING_EQ_VAR
         ) {
             _evalStringCondition(c, f);
-        } else if (c.op >= Op.UINT_EQ_CONST && c.op <= Op.UINT_LTE_VAR) {
+        } else if ((c.op >= Op.UINT_EQ_CONST && c.op <= Op.UINT_LTE_VAR) || c.op >= Op.UINT_EQ_VAR_OFFSET) {
             _evalUintCondition(c, f);
         } else if (c.op == Op.ADDRESS_EQ_CONST || c.op == Op.ADDRESS_EQ_VAR) {
             _evalAddressCondition(c, f);
@@ -972,7 +984,10 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
         uint256 compareValue;
         bool useVar = (c.op >= Op.UINT_EQ_VAR);
 
-        if (useVar) {
+        if (c.op >= Op.UINT_EQ_VAR_OFFSET) {
+            (bytes32 targetFieldId, int256 offset) = abi.decode(c.bytesArg, (bytes32, int256));
+            compareValue = _addOffset(targetFieldId, _getUintFromStored(targetFieldId), offset);
+        } else if (useVar) {
             bytes32 targetFieldId = abi.decode(c.bytesArg, (bytes32));
             compareValue = _getUintFromStored(targetFieldId);
         } else {
@@ -986,13 +1001,34 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
     }
 
     /**
+     * @notice A stored value plus a signed constant. The input is refused when
+     *         the result would be below zero or above the uint256 range.
+     */
+    function _addOffset(bytes32 targetFieldId, uint256 stored, int256 offset) internal pure returns (uint256) {
+        unchecked {
+            if (offset >= 0) {
+                uint256 sum = stored + uint256(offset);
+                if (sum < stored) revert OffsetOutOfRange(targetFieldId, stored, offset);
+                return sum;
+            }
+            // -offset as a magnitude, correct for type(int256).min too.
+            uint256 magnitude = uint256(-(offset + 1)) + 1;
+            if (magnitude > stored) revert OffsetOutOfRange(targetFieldId, stored, offset);
+            return stored - magnitude;
+        }
+    }
+
+    /**
      * @notice Compare two uint256 values based on operation.
      */
     function _compareUint(uint256 a, uint256 b, Op op) internal pure returns (bool) {
         // Normalize VAR ops to CONST ops for comparison (subtract 5)
         // UINT_EQ_VAR = 9, UINT_GT_VAR = 10, etc. -> normalize to UINT_EQ_CONST, UINT_GT_CONST, etc.
         Op normalizedOp = op;
-        if (op >= Op.UINT_EQ_VAR) {
+        if (op >= Op.UINT_EQ_VAR_OFFSET) {
+            // UINT_EQ_VAR_OFFSET = 18 -> UINT_EQ_CONST = 4, and so on.
+            normalizedOp = Op(uint8(op) - uint8(Op.UINT_EQ_VAR_OFFSET) + uint8(Op.UINT_EQ_CONST));
+        } else if (op >= Op.UINT_EQ_VAR) {
             normalizedOp = Op(uint8(op) - 5);
         }
         
@@ -1057,7 +1093,11 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
         if (op <= Op.ADDRESS_EQ_VAR) return _getAddressOpName(op);
         if (op == Op.SENDER_EQ_VAR_ADDRESS) return "SENDER_EQ_VAR_ADDRESS";
         if (op == Op.SENDER_IN_ALLOWED_ADDRESSES) return "SENDER_IN_ALLOWED_ADDRESSES";
-        return "UNKNOWN_OPERATION";
+        if (op == Op.UINT_EQ_VAR_OFFSET) return "UINT_EQ_VAR_OFFSET";
+        if (op == Op.UINT_GT_VAR_OFFSET) return "UINT_GT_VAR_OFFSET";
+        if (op == Op.UINT_GTE_VAR_OFFSET) return "UINT_GTE_VAR_OFFSET";
+        if (op == Op.UINT_LT_VAR_OFFSET) return "UINT_LT_VAR_OFFSET";
+        return "UINT_LTE_VAR_OFFSET";
     }
 
     function _getStringOpName(Op op) private pure returns (string memory) {

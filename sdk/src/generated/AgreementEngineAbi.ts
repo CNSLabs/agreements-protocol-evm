@@ -157,6 +157,27 @@ export const AgreementEngineABI = [
     "type": "error"
   },
   {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "fieldId",
+        "type": "bytes32"
+      },
+      {
+        "internalType": "uint256",
+        "name": "stored",
+        "type": "uint256"
+      },
+      {
+        "internalType": "int256",
+        "name": "offset",
+        "type": "int256"
+      }
+    ],
+    "name": "OffsetOutOfRange",
+    "type": "error"
+  },
+  {
     "inputs": [],
     "name": "OwnerZero",
     "type": "error"

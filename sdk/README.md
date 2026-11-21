@@ -148,6 +148,53 @@ Time windows need both sides to know them:
 - **The SDK.** A version of this SDK from before time windows ignores `time`
   and deploys the agreement with no window, without an error.
 
+### Checks And Stored Values
+
+An input can check a submitted number against a constant or against a value the
+agreement stores, and can store a number it submits. Together they let an
+agreement repeat a set of steps a counted number of times with one set of
+states.
+
+```json
+"acceptMilestone": {
+  "type": "VerifiedCredentialEIP712",
+  "data": {
+    "reviewNote": "${variables.reviewNote}",
+    "milestone": "${variables.milestone}",
+    "currentMilestone": "${variables.currentMilestone}"
+  },
+  "issuer": "${variables.reviewer.value}",
+  "checks": [
+    { "field": "milestone", "is": "equalTo", "to": "${variables.currentMilestone}" },
+    { "field": "milestone", "is": "lessThan", "to": "${variables.milestoneCount}" },
+    { "field": "currentMilestone", "is": "equalTo", "to": "${variables.currentMilestone}", "plus": 1 }
+  ],
+  "store": ["currentMilestone"]
+}
+```
+
+- `checks`: each entry compares one `uint256` field of the input. `is` is one of
+  `equalTo`, `lessThan`, `lessThanOrEqualTo`, `greaterThan`,
+  `greaterThanOrEqualTo`. `to` is a whole number or `"${variables.name}"`, a
+  `uint256` variable the agreement stores. With a stored variable, `plus` or
+  `minus` adds or subtracts a whole number first. Every check must hold.
+- `store`: the fields of the input whose submitted value the agreement keeps
+  when the input is accepted. The value replaces the stored variable of the
+  same name.
+
+A checked field and a stored field must be required: the contract skips a check
+on an optional field that is left out. Checks are evaluated against the values
+stored before the input, so "the stored value plus one" in the example means one
+more than the milestone the agreement was on.
+
+In a loop, give every repeated step a field that names its round and check it
+against the stored round, as `milestone` does above. A step that was signed for
+an earlier round and never submitted is then refused in a later one.
+
+`agreements/counted-milestones` is a complete example. A check with `plus` or
+`minus` needs an engine that has the offset comparisons; an older engine refuses
+to create the agreement.
+
 ## License
 
 The SDK package is licensed under `Apache-2.0`. See [`LICENSE`](LICENSE), [`NOTICE`](NOTICE), [../licenses/Apache-2.0.txt](../licenses/Apache-2.0.txt), and [../LICENSING.md](../LICENSING.md).

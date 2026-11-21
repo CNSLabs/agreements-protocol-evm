@@ -52,6 +52,14 @@ export enum Op {
   // Sender operations
   SENDER_EQ_VAR_ADDRESS = 16,
   SENDER_IN_ALLOWED_ADDRESSES = 17,
+
+  // UINT256 operations - compare with a stored variable plus or minus a constant.
+  // bytesArg is abi.encode(bytes32 targetFieldId, int256 offset).
+  UINT_EQ_VAR_OFFSET = 18,
+  UINT_GT_VAR_OFFSET = 19,
+  UINT_GTE_VAR_OFFSET = 20,
+  UINT_LT_VAR_OFFSET = 21,
+  UINT_LTE_VAR_OFFSET = 22,
 }
 
 /**
@@ -279,6 +287,30 @@ export interface InputTimeWindow {
   before?: string | number;
 }
 
+/** The comparisons an input check can make. */
+export type InputCheckComparison =
+  | "equalTo"
+  | "lessThan"
+  | "lessThanOrEqualTo"
+  | "greaterThan"
+  | "greaterThanOrEqualTo";
+
+/**
+ * A check on one submitted number: `field` `is` `to`, where `to` is a whole
+ * number or "${variables.name}", a `uint256` variable the agreement stores.
+ * With a stored variable, `plus` or `minus` adds or subtracts a whole number
+ * first: `{ field: "round", is: "equalTo", to: "${variables.round}", plus: 1 }`
+ * accepts only the stored round plus one.
+ */
+export interface InputCheck {
+  /** A key of the input's `data` whose type is `uint256`. */
+  field: string;
+  is: InputCheckComparison;
+  to: string | number;
+  plus?: string | number;
+  minus?: string | number;
+}
+
 /**
  * Input definition in execution
  */
@@ -291,6 +323,10 @@ export interface ExecutionInput {
   issuer?: string | string[];
   /** Limits when the input is accepted. Requires the V1.1 contracts. */
   time?: InputTimeWindow;
+  /** Checks on submitted numbers, against constants or stored variables. All must hold. */
+  checks?: InputCheck[];
+  /** Keys of `data` whose submitted value the agreement stores when the input is accepted. */
+  store?: string[];
 }
 
 /**
