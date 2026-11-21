@@ -1,9 +1,9 @@
 {
-  "implementation": "0x98FAf8d4f3073c2d9906D1B1a5726423bf72D12a",
-  "factory": "0x11553584c769C4E6DB80722E0B66971C4b3104Bc",
+  "implementation": "0xB56C929CD240e6255BD5fdc471507CF21ebd4E57",
+  "factory": "0x21fa3A97d40c31E98352A06CdcD01687E2AA87c5",
   "chainId": "59141",
   "network": "lineaSepolia",
-  "deployedAt": "2026-11-20T20:46:47.437Z",
+  "deployedAt": "2026-11-20T23:59:33.927Z",
   "deployer": "0x3793901C5eBB531F6CE5cE6E14a900BD3750591b",
   "version": "1.1",
   "legacy": {
