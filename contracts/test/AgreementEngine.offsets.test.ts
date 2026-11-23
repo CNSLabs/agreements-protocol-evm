@@ -71,25 +71,74 @@ describe("AgreementEngine comparisons with a stored value and an offset", functi
 
   describe("each comparison turns at stored plus offset", function () {
     // stored 100. With offset +5 the comparison is against 105, with -5 against 95.
-    const CASES: Array<[string, number, (target: bigint) => { fails: bigint; meets: bigint }]> = [
-      ["UINT_EQ_VAR_OFFSET", Op.UINT_EQ_VAR_OFFSET, (t) => ({ fails: t + 1n, meets: t })],
-      ["UINT_GT_VAR_OFFSET", Op.UINT_GT_VAR_OFFSET, (t) => ({ fails: t, meets: t + 1n })],
-      ["UINT_GTE_VAR_OFFSET", Op.UINT_GTE_VAR_OFFSET, (t) => ({ fails: t - 1n, meets: t })],
-      ["UINT_LT_VAR_OFFSET", Op.UINT_LT_VAR_OFFSET, (t) => ({ fails: t, meets: t - 1n })],
-      ["UINT_LTE_VAR_OFFSET", Op.UINT_LTE_VAR_OFFSET, (t) => ({ fails: t + 1n, meets: t })],
+    // `fails` and `meets` sit on the two sides of the turning point. Every value on each side is tried:
+    // the far ones tell an inequality from an equality, and a comparison from its mirror image.
+    const CASES: Array<[string, number, (target: bigint) => { fails: bigint[]; meets: bigint[] }]> = [
+      ["UINT_EQ_VAR_OFFSET", Op.UINT_EQ_VAR_OFFSET, (t) => ({ fails: [t - 1n, t + 1n], meets: [t] })],
+      ["UINT_GT_VAR_OFFSET", Op.UINT_GT_VAR_OFFSET, (t) => ({ fails: [t, t - 1n, 0n], meets: [t + 1n, t + 50n] })],
+      ["UINT_GTE_VAR_OFFSET", Op.UINT_GTE_VAR_OFFSET, (t) => ({ fails: [t - 1n, 0n], meets: [t, t + 1n, t + 50n] })],
+      ["UINT_LT_VAR_OFFSET", Op.UINT_LT_VAR_OFFSET, (t) => ({ fails: [t, t + 1n, t + 50n], meets: [t - 1n, 0n] })],
+      ["UINT_LTE_VAR_OFFSET", Op.UINT_LTE_VAR_OFFSET, (t) => ({ fails: [t + 1n, t + 50n], meets: [t, t - 1n, 0n] })],
     ];
     for (const [name, op, at] of CASES) {
       for (const offset of [5n, -5n, 0n]) {
         it(`${name} with offset ${offset}`, async function () {
           const agreement = await single(op, 100n, offset);
           const { fails, meets } = at(100n + offset);
-          await expect(agreement.submitInput(id("submit"), payload(VALUE, fails)))
-            .to.be.revertedWithCustomError(implementation, "ComparisonFailed")
-            .withArgs(name, "UINT256");
-          await expect(agreement.submitInput(id("submit"), payload(VALUE, meets))).to.emit(agreement, "InputAccepted");
+          for (const value of fails) {
+            await expect(agreement.submitInput(id("submit"), payload(VALUE, value)), `${value} is refused`)
+              .to.be.revertedWithCustomError(implementation, "ComparisonFailed")
+              .withArgs(name, "UINT256");
+          }
+          for (const value of meets) {
+            await expect(agreement.submitInput(id("submit"), payload(VALUE, value)), `${value} is accepted`).to.emit(agreement, "InputAccepted");
+          }
         });
       }
     }
+
+    it("an offset of any size is applied exactly", async function () {
+      const BIG = 2n ** 200n;
+      for (const [storedValue, offset] of [[7n, BIG], [BIG + 7n, -BIG], [1n, 2n ** 255n - 1n], [MAX, -(2n ** 255n - 1n)]] as const) {
+        const target = storedValue + offset;
+        const agreement = await single(Op.UINT_EQ_VAR_OFFSET, storedValue, offset);
+        for (const wrong of [target - 1n, target + 1n, storedValue]) {
+          await expect(agreement.submitInput(id("submit"), payload(VALUE, wrong)), `${wrong} against ${storedValue} offset ${offset}`)
+            .to.be.revertedWithCustomError(implementation, "ComparisonFailed")
+            .withArgs("UINT_EQ_VAR_OFFSET", "UINT256");
+        }
+        await expect(agreement.submitInput(id("submit"), payload(VALUE, target))).to.emit(agreement, "InputAccepted");
+      }
+    });
+  });
+
+  it("a comparison code past the last one the engine has is refused when the agreement is created", async function () {
+    // An engine from before the offset codes refuses them for the same reason: the code is outside its list.
+    const definition = (op: number) =>
+      [
+        "ipfs://unknown-code",
+        id(`unknown-code-${op}`),
+        OPEN,
+        [{ id: id("submit"), fields: [field(VALUE)], conditions: [{ op, fieldId: VALUE, bytesArg: offsetArg(STORED, 0) }], verifierKeys: [] }],
+        [{ fromState: OPEN, toState: OPEN, inputId: id("submit") }],
+        [{ id: STORED, fType: UINT256, data: uint(1n) }],
+        [],
+        [],
+      ] as const;
+    // Sent as raw calldata, since the typed binding would refuse an unknown code before the call.
+    const send = async (op: number) => {
+      const [sender] = await ethers.getSigners();
+      const known = factory.interface.encodeFunctionData("createAgreement", definition(Op.UINT_LTE_VAR_OFFSET));
+      const marker = abi.encode(["uint8"], [Op.UINT_LTE_VAR_OFFSET]);
+      const at = known.indexOf(marker.slice(2));
+      expect(at, "the code appears once in the calldata").to.be.greaterThan(0);
+      expect(known.indexOf(marker.slice(2), at + 1)).to.equal(-1);
+      const data = known.slice(0, at) + abi.encode(["uint8"], [op]).slice(2) + known.slice(at + 64);
+      return sender.sendTransaction({ to: await factory.getAddress(), data, ...MINED });
+    };
+    await expect(send(Op.UINT_LTE_VAR_OFFSET)).to.emit(factory, "AgreementDeployed");
+    await expect(send(Op.UINT_LTE_VAR_OFFSET + 1)).to.be.reverted;
+    await expect(send(255)).to.be.reverted;
   });
 
   describe("an offset that leaves the uint256 range refuses the input", function () {
@@ -202,29 +251,41 @@ describe("AgreementEngine comparisons with a stored value and an offset", functi
       });
     }
 
-    it("a permit that names a round is refused once that round has passed", async function () {
+    it("a permit that names a round is refused once that round has passed, and a permit for the current round moves it on", async function () {
       const [party, relayer] = await ethers.getSigners();
       const agreement = await counted(3);
       const deadline = (await time.latest()) + 3600;
-      const body = payload(ROUND, 1);
-      const signature = await party.signTypedData(
-        { name: "AgreementEngine", version: "1", chainId: (await ethers.provider.getNetwork()).chainId, verifyingContract: await agreement.getAddress() },
-        {
-          PermitInput: [
-            { name: "signer", type: "address" },
-            { name: "inputId", type: "bytes32" },
-            { name: "payload", type: "bytes" },
-            { name: "nonce", type: "uint256" },
-            { name: "deadline", type: "uint256" },
-          ],
-        },
-        { signer: party.address, inputId: id("next"), payload: body, nonce: 0n, deadline }
-      );
+      const sign = async (body: string) =>
+        party.signTypedData(
+          { name: "AgreementEngine", version: "1", chainId: (await ethers.provider.getNetwork()).chainId, verifyingContract: await agreement.getAddress() },
+          {
+            PermitInput: [
+              { name: "signer", type: "address" },
+              { name: "inputId", type: "bytes32" },
+              { name: "payload", type: "bytes" },
+              { name: "nonce", type: "uint256" },
+              { name: "deadline", type: "uint256" },
+            ],
+          },
+          { signer: party.address, inputId: id("next"), payload: body, nonce: 0n, deadline }
+        );
+      const stale = payload(ROUND, 1);
+      const staleSignature = await sign(stale);
       // Someone else completes round 1 directly; the permit for round 1 is now for a past round.
       await agreement.connect(relayer).submitInput(id("next"), payload(ROUND, 1));
-      await expect(agreement.connect(relayer).submitInputWithPermit(party.address, id("next"), body, deadline, signature))
+      await expect(agreement.connect(relayer).submitInputWithPermit(party.address, id("next"), stale, deadline, staleSignature))
         .to.be.revertedWithCustomError(implementation, "ComparisonFailed")
         .withArgs("UINT_EQ_VAR_OFFSET", "UINT256");
+
+      // A permit for round 2, at the same nonce, is accepted: on the permit path too the round is
+      // compared with the value stored before the input, and stored afterwards.
+      const current = payload(ROUND, 2);
+      await expect(agreement.connect(relayer).submitInputWithPermit(party.address, id("next"), current, deadline, await sign(current))).to.emit(
+        agreement,
+        "InputAccepted"
+      );
+      await agreement.connect(relayer).submitInput(id("last"), payload(ROUND, 3));
+      expect(await agreement.currentState()).to.equal(DONE);
     });
   });
 

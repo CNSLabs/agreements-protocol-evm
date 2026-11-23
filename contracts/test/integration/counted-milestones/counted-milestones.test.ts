@@ -41,6 +41,7 @@ describe("AgreementEngine (integration) - counted milestones, checks and stored 
     return {
       state: () => view.getCurrentState(counted),
       view,
+      grantee: g,
       reviewer: r,
       refused,
       submitWork: (milestone: number) => g.engine.submitInput(counted, "submitWork", { workNote: "delivered", milestone: String(milestone) }, true),
@@ -76,20 +77,27 @@ describe("AgreementEngine (integration) - counted milestones, checks and stored 
     });
   }
 
-  it("an acceptance signed for one milestone and never submitted is refused for the next", async () => {
+  it("work signed for one milestone and never submitted is refused for the next, by the check on the milestone", async () => {
     const s = await setup(3);
     await s.submitWork(1);
+    // While milestone 1 is in review the grantee signs a resubmission, in case changes are requested.
+    // The grantee submits nothing after this, so the permit stays valid for the grantee's next input.
     const deadline = (await ethers.provider.getBlock("latest"))!.timestamp + 3600;
-    const data = { reviewNote: "accepted", milestone: "1", currentMilestone: "2" };
-    const permit = await s.reviewer.engine.createPermitSignature(s.reviewer.walletClient, counted, "acceptMilestone", data, deadline);
-    // The reviewer sends the work back instead, then accepts the revision directly: milestone 1 is done.
-    await s.requestChanges(1);
-    await s.submitWork(1);
+    const stale = { workNote: "revised", milestone: "1" };
+    const permit = await s.grantee.engine.createPermitSignature(s.grantee.walletClient, counted, "submitWork", stale, deadline);
+    // The reviewer accepts instead: the agreement is on milestone 2 and takes work again.
     await s.accept(1);
-    await s.submitWork(2);
-    expect(await s.state()).to.equal("IN_REVIEW");
-    const replay = s.view.submitInputWithPermit(permit.signerAddress, counted, "acceptMilestone", data, deadline, permit.signature, true);
-    expect(await s.refused(replay)).to.be.a("string");
+    expect(await s.state()).to.equal("WORK_IN_PROGRESS");
+
+    const replay = s.view.submitInputWithPermit(permit.signerAddress, counted, "submitWork", stale, deadline, permit.signature, true);
+    expect(await s.refused(replay)).to.match(/ComparisonFailed/);
+    expect(await s.state()).to.equal("WORK_IN_PROGRESS");
+
+    // The refusal was the milestone check and nothing else: the same signer, at the same permit
+    // nonce and deadline, is accepted for milestone 2.
+    const current = { workNote: "delivered", milestone: "2" };
+    const fresh = await s.grantee.engine.createPermitSignature(s.grantee.walletClient, counted, "submitWork", current, deadline);
+    await s.view.submitInputWithPermit(fresh.signerAddress, counted, "submitWork", current, deadline, fresh.signature, true);
     expect(await s.state()).to.equal("IN_REVIEW");
   });
 });
