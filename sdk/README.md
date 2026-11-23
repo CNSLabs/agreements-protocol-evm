@@ -191,9 +191,34 @@ In a loop, give every repeated step a field that names its round and check it
 against the stored round, as `milestone` does above. A step that was signed for
 an earlier round and never submitted is then refused in a later one.
 
-`agreements/counted-milestones` is a complete example. A check with `plus` or
-`minus` needs an engine that has the offset comparisons; an older engine refuses
-to create the agreement.
+Refused when the agreement is transformed, because the agreement could not work
+as written:
+
+- a variable in a check that has no value before the check can run: it is not
+  listed in `execution.initialize.data`, and every input that stores it also
+  checks against it;
+- a stored field whose type is not that of the variable it replaces, or of the
+  field another input stores under the same name;
+- an empty `store` list;
+- a value at creation, for a variable that a check names or an input stores,
+  that is not a whole number written as digits (`""`, `" 2 "`, `"0x10"` and
+  `true` are refused, where they would otherwise be read as 0, 2, 16 and 1).
+
+The SDK does not work out whether the checks of an input can be met together,
+or whether a counter starts within its count: run the agreement once before it
+is used.
+
+`agreements/counted-milestones` is a complete example.
+
+Checks and stored values need both sides to know them:
+
+- **The contracts.** A check against a stored variable, with or without `plus`
+  or `minus`, is built with the engine's offset comparisons. An engine from
+  before them, V1.0 included, refuses to create the agreement.
+- **The SDK.** A version of this SDK from before checks ignores `checks` and
+  `store` and deploys the agreement with nothing checked and nothing stored,
+  without an error. Build and deploy such an agreement with this version or a
+  later one.
 
 ## License
 

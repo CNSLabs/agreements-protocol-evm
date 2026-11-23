@@ -93,10 +93,16 @@ contracts. The names exported from the package root are the same as in 0.1.4.
   number or a stored `uint256` variable, optionally `plus` or `minus` a whole
   number, and `store`, the fields whose submitted value the agreement keeps.
   With them an agreement can count rounds and repeat one set of states.
-  A checked or stored field must be required, a variable in a check must be
-  stored at creation or by an input, and a check the SDK cannot read is
-  refused. A check with `plus` or `minus` uses the engine's offset
-  comparisons, which an engine from before them refuses at creation.
+  A checked or stored field must be required, and a check the SDK cannot read
+  is refused. Also refused: a variable in a check that has no value before the
+  check can run, a stored field of another type than the variable it replaces,
+  an empty `store` list, and a value at creation for a checked or stored
+  variable that is not a whole number written as digits. A check against a
+  stored variable, with or without `plus` or `minus`, uses the engine's offset
+  comparisons, so an engine from before them, V1.0 included, refuses to create
+  the agreement. An SDK from before checks ignores `checks` and `store` and
+  deploys the agreement with nothing checked and nothing stored: build such an
+  agreement with this version or a later one.
   `agreements/counted-milestones` is an example.
 
 ### Limits

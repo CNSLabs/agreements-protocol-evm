@@ -39,17 +39,17 @@ describe("checks and stored fields on inputs", () => {
   describe("the example agreement", () => {
     it("a step names its milestone: equalTo a stored variable", () => {
       expect(inputDef(counted, "submitWork").conditions.at(-1)).toEqual({
-        op: Op.UINT_EQ_VAR,
+        op: Op.UINT_EQ_VAR_OFFSET,
         fieldId: fieldToBytes32("milestone"),
-        bytesArg: fieldToBytes32("currentMilestone"),
+        bytesArg: offset("currentMilestone", 0),
       });
     });
 
     it("accepting a milestone: this one, not the last, and the stored milestone moves on by one", () => {
       const def = inputDef(counted, "acceptMilestone");
       expect(def.conditions.slice(-3)).toEqual([
-        { op: Op.UINT_EQ_VAR, fieldId: fieldToBytes32("milestone"), bytesArg: fieldToBytes32("currentMilestone") },
-        { op: Op.UINT_LT_VAR, fieldId: fieldToBytes32("milestone"), bytesArg: fieldToBytes32("milestoneCount") },
+        { op: Op.UINT_EQ_VAR_OFFSET, fieldId: fieldToBytes32("milestone"), bytesArg: offset("currentMilestone", 0) },
+        { op: Op.UINT_LT_VAR_OFFSET, fieldId: fieldToBytes32("milestone"), bytesArg: offset("milestoneCount", 0) },
         { op: Op.UINT_EQ_VAR_OFFSET, fieldId: fieldToBytes32("currentMilestone"), bytesArg: offset("currentMilestone", 1) },
       ]);
       const stored = def.fields.find((f) => f.fieldId === fieldToBytes32("currentMilestone"))!;
@@ -72,12 +72,12 @@ describe("checks and stored fields on inputs", () => {
 
   describe("what a check becomes", () => {
     it.each([
-      ["equalTo", Op.UINT_EQ_CONST, Op.UINT_EQ_VAR, Op.UINT_EQ_VAR_OFFSET],
-      ["greaterThan", Op.UINT_GT_CONST, Op.UINT_GT_VAR, Op.UINT_GT_VAR_OFFSET],
-      ["greaterThanOrEqualTo", Op.UINT_GTE_CONST, Op.UINT_GTE_VAR, Op.UINT_GTE_VAR_OFFSET],
-      ["lessThan", Op.UINT_LT_CONST, Op.UINT_LT_VAR, Op.UINT_LT_VAR_OFFSET],
-      ["lessThanOrEqualTo", Op.UINT_LTE_CONST, Op.UINT_LTE_VAR, Op.UINT_LTE_VAR_OFFSET],
-    ])("%s against a constant, a stored variable, and a stored variable plus or minus a constant", (is, fixed, stored, shifted) => {
+      ["equalTo", Op.UINT_EQ_CONST, Op.UINT_EQ_VAR_OFFSET],
+      ["greaterThan", Op.UINT_GT_CONST, Op.UINT_GT_VAR_OFFSET],
+      ["greaterThanOrEqualTo", Op.UINT_GTE_CONST, Op.UINT_GTE_VAR_OFFSET],
+      ["lessThan", Op.UINT_LT_CONST, Op.UINT_LT_VAR_OFFSET],
+      ["lessThanOrEqualTo", Op.UINT_LTE_CONST, Op.UINT_LTE_VAR_OFFSET],
+    ])("%s against a constant, a stored variable, and a stored variable plus or minus a constant", (is, fixed, stored) => {
       const fieldId = fieldToBytes32("milestone");
       const to = "${variables.milestoneCount}";
       expect(
@@ -92,19 +92,46 @@ describe("checks and stored fields on inputs", () => {
       ).toEqual([
         { op: fixed, fieldId, bytesArg: uint(7) },
         { op: fixed, fieldId, bytesArg: uint(12) },
-        { op: stored, fieldId, bytesArg: fieldToBytes32("milestoneCount") },
-        { op: shifted, fieldId, bytesArg: offset("milestoneCount", 2) },
-        { op: shifted, fieldId, bytesArg: offset("milestoneCount", -1) },
-        { op: stored, fieldId, bytesArg: fieldToBytes32("milestoneCount") },
+        { op: stored, fieldId, bytesArg: offset("milestoneCount", 0) },
+        { op: stored, fieldId, bytesArg: offset("milestoneCount", 2) },
+        { op: stored, fieldId, bytesArg: offset("milestoneCount", -1) },
+        { op: stored, fieldId, bytesArg: offset("milestoneCount", 0) },
       ]);
     });
 
-    it("a variable an input stores can be compared against, as well as one stored at creation", () => {
+    it("no check uses a comparison with a stored variable that an engine from before the offset codes knows", () => {
+      // Those engines then refuse to create the agreement. V1.0 would accept the plain codes and read them differently.
+      const older = [Op.UINT_EQ_VAR, Op.UINT_GT_VAR, Op.UINT_GTE_VAR, Op.UINT_LT_VAR, Op.UINT_LTE_VAR] as number[];
+      const defs = transformAgreementToOnChainParams(counted, undefined, INIT).inputDefs;
+      const ops = defs.flatMap((def) => def.conditions.map((condition) => condition.op as number));
+      expect(ops.filter((op) => older.includes(op))).toEqual([]);
+      for (const def of defs) {
+        expect(def.conditions.some((condition) => (condition.op as number) >= Op.UINT_EQ_VAR_OFFSET)).toBe(true);
+      }
+    });
+
+    it("a variable an input stores first can be compared against, as well as one stored at creation", () => {
+      const { currentMilestone: _, ...init } = INIT;
+      // `start` gives the milestone its first value and does not check against it.
       const agreement = edited((a) => {
         delete a.execution.initialize.data!.currentMilestone;
+        a.execution.inputs.start = {
+          type: "VerifiedCredentialEIP712",
+          data: { currentMilestone: "${variables.currentMilestone}" },
+          issuer: "${variables.reviewer.value}",
+          checks: [{ field: "currentMilestone", is: "equalTo", to: 1 }],
+          store: ["currentMilestone"],
+        };
       });
-      const { currentMilestone: _, ...init } = INIT;
       expect(() => transformAgreementToOnChainParams(agreement, undefined, init)).not.toThrow();
+    });
+
+    it("refuses a variable that has no value at creation when every input that stores it also checks against it", () => {
+      const { currentMilestone: _, ...init } = INIT;
+      const agreement = edited((a) => { delete a.execution.initialize.data!.currentMilestone; });
+      expect(() => transformAgreementToOnChainParams(agreement, undefined, init)).toThrow(
+        "variable 'currentMilestone' has no value when the agreement is created, and every input that stores it also checks against it"
+      );
     });
   });
 
@@ -147,6 +174,55 @@ describe("checks and stored fields on inputs", () => {
       expect(() => transformAgreementToOnChainParams(missing, undefined, INIT)).toThrow("'store' names 'round', which is not a field of this input");
       const twice = edited((a) => { a.execution.inputs.acceptMilestone.store = ["currentMilestone", "currentMilestone"]; });
       expect(() => transformAgreementToOnChainParams(twice, undefined, INIT)).toThrow("'store' names a field twice");
+    });
+
+    it("an empty 'store' list", () => {
+      const empty = edited((a) => { a.execution.inputs.acceptMilestone.store = []; });
+      expect(() => transformAgreementToOnChainParams(empty, undefined, INIT)).toThrow("'store' must be a list with at least one of the input's field names");
+    });
+
+    it("a stored field of another type than the variable it replaces", () => {
+      // A text field keyed like the stored number: once stored, every check on the milestone would fail for good.
+      const agreement = edited((a) => {
+        a.execution.inputs.requestChanges.data!.currentMilestone = { type: "string" };
+        a.execution.inputs.requestChanges.store = ["currentMilestone"];
+      });
+      expect(() => transformAgreementToOnChainParams(agreement, undefined, INIT)).toThrow(
+        "Input 'requestChanges': stored field 'currentMilestone' is not of the type of variable 'currentMilestone' ('uint256')"
+      );
+    });
+
+    it("two inputs that store one name with different types", () => {
+      const agreement = edited((a) => {
+        a.execution.inputs.submitWork.data!.tally = { type: "uint256" };
+        a.execution.inputs.submitWork.store = ["tally"];
+        a.execution.inputs.requestChanges.data!.tally = { type: "string" };
+        a.execution.inputs.requestChanges.store = ["tally"];
+      });
+      expect(() => transformAgreementToOnChainParams(agreement, undefined, INIT)).toThrow(
+        "Input 'requestChanges': stored field 'tally' has another type than the field of the same name that input 'submitWork' stores"
+      );
+    });
+
+    it.each([
+      ["an empty value, which would be stored as 0", "currentMilestone", ""],
+      ["an empty count", "milestoneCount", ""],
+      ["digits with spaces around them", "currentMilestone", " 2 "],
+      ["a hexadecimal number", "milestoneCount", "0x10"],
+      ["a boolean", "currentMilestone", true],
+      ["a negative number", "milestoneCount", -3n],
+      ["a fraction", "milestoneCount", "2.5"],
+      ["words", "currentMilestone", "one"],
+    ])("a starting value that is not a whole number written as one: %s", (_label, name, value) => {
+      expect(() => transformAgreementToOnChainParams(counted, undefined, { ...INIT, [name]: value })).toThrow(
+        `'${name}', whose value at creation must be a whole number that is not negative`
+      );
+    });
+
+    it("a starting value as digits, a bigint or a whole number is taken, zero included", () => {
+      for (const value of ["0", "1", 1n, 7 as unknown as bigint]) {
+        expect(() => transformAgreementToOnChainParams(counted, undefined, { ...INIT, currentMilestone: value })).not.toThrow();
+      }
     });
 
     it("transformInputs called on its own needs the stored variable names for a check against a variable", () => {

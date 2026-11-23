@@ -101,6 +101,7 @@ export function transformAgreementToOnChainParams(
   }
 
   // 5. Build initVars array for contract
+  assertCheckedValuesAreWholeNumbers(execution.inputs, requiredInitVars, initValues || {});
   const initVars = buildInitVars(requiredInitVars, initValues || {});
 
   // 6. Transform inputs to InputDefs (all inputs treated uniformly now)
@@ -190,9 +191,37 @@ export function transformInputs(
   const stored = storedVariables === undefined ? undefined : new Set(storedVariables);
   // A variable an input stores can be compared against as well as one stored at creation.
   const storedByInputs = new Set<string>();
+  // The variables some input stores without itself checking against them: an
+  // input like that can give the variable its first value.
+  const firstStoredByInputs = new Set<string>();
+  const storedTypes = new Map<string, { fType: FieldType; by: string }>();
   for (const [inputKey, inputDef] of Object.entries(inputs)) {
+    const checked = variablesNamedInChecks(inputDef);
     for (const key of storedFieldKeys(inputKey, inputDef)) {
-      storedByInputs.add(extractVariableName((inputDef.data || {})[key]) || key);
+      const fieldMeta = resolveInputFieldMetadata(key, (inputDef.data || {})[key], variables);
+      const name = fieldMeta.name;
+      // A stored value takes the type of the field that wrote it. A field of
+      // another type under the same name would make every later check on that
+      // name fail for good.
+      const declared = Object.prototype.hasOwnProperty.call(variables, name) ? variables[name] : undefined;
+      if (declared && mapVariableTypeToFieldType(declared.type) !== fieldMeta.fType) {
+        throw new Error(
+          `Input '${inputKey}': stored field '${key}' is not of the type of variable '${name}' ('${declared.type}'), ` +
+          `whose stored value it would replace. Write the field as '\${variables.${name}}'.`
+        );
+      }
+      const earlier = storedTypes.get(name);
+      if (earlier && earlier.fType !== fieldMeta.fType) {
+        throw new Error(
+          `Input '${inputKey}': stored field '${key}' has another type than the field of the same name that ` +
+          `input '${earlier.by}' stores. Both write the same stored value.`
+        );
+      }
+      storedTypes.set(name, { fType: fieldMeta.fType, by: inputKey });
+      storedByInputs.add(name);
+      if (!checked.has(name)) {
+        firstStoredByInputs.add(name);
+      }
     }
   }
 
@@ -247,7 +276,7 @@ export function transformInputs(
 
     conditions.push(...buildIssuerConditions(inputDef.issuer, variables));
     conditions.push(...buildTimeConditions(inputKey, inputDef.time, variables, stored));
-    conditions.push(...buildCheckConditions(inputKey, inputDef, variables, stored, storedByInputs));
+    conditions.push(...buildCheckConditions(inputKey, inputDef, variables, stored, storedByInputs, firstStoredByInputs));
 
     return {
       id,
@@ -669,12 +698,18 @@ function buildTimeConditions(
   return conditions;
 }
 
+// A check against a stored variable always uses an offset code, with an offset
+// of 0 when the check has no 'plus' or 'minus'. An engine from before these
+// codes refuses to create the agreement. With the plain *_VAR codes it would
+// accept it, and V1.0 would read a check differently: it stores an input's
+// fields before it evaluates the conditions, so a check against a variable the
+// same input stores would compare the new value with itself.
 const CHECK_OPS = {
-  equalTo: { fixed: Op.UINT_EQ_CONST, stored: Op.UINT_EQ_VAR, offset: Op.UINT_EQ_VAR_OFFSET },
-  greaterThan: { fixed: Op.UINT_GT_CONST, stored: Op.UINT_GT_VAR, offset: Op.UINT_GT_VAR_OFFSET },
-  greaterThanOrEqualTo: { fixed: Op.UINT_GTE_CONST, stored: Op.UINT_GTE_VAR, offset: Op.UINT_GTE_VAR_OFFSET },
-  lessThan: { fixed: Op.UINT_LT_CONST, stored: Op.UINT_LT_VAR, offset: Op.UINT_LT_VAR_OFFSET },
-  lessThanOrEqualTo: { fixed: Op.UINT_LTE_CONST, stored: Op.UINT_LTE_VAR, offset: Op.UINT_LTE_VAR_OFFSET },
+  equalTo: { fixed: Op.UINT_EQ_CONST, stored: Op.UINT_EQ_VAR_OFFSET },
+  greaterThan: { fixed: Op.UINT_GT_CONST, stored: Op.UINT_GT_VAR_OFFSET },
+  greaterThanOrEqualTo: { fixed: Op.UINT_GTE_CONST, stored: Op.UINT_GTE_VAR_OFFSET },
+  lessThan: { fixed: Op.UINT_LT_CONST, stored: Op.UINT_LT_VAR_OFFSET },
+  lessThanOrEqualTo: { fixed: Op.UINT_LTE_CONST, stored: Op.UINT_LTE_VAR_OFFSET },
 } as const;
 const CHECK_KEYS = ["field", "is", "to", "plus", "minus"];
 const own = (object: object, key: string) => Object.prototype.hasOwnProperty.call(object, key);
@@ -685,8 +720,8 @@ function storedFieldKeys(inputKey: string, inputDef: AgreementJson["execution"][
   if (store === undefined) {
     return [];
   }
-  if (!Array.isArray(store)) {
-    throw new Error(`Input '${inputKey}': 'store' must be a list of the input's field names`);
+  if (!Array.isArray(store) || store.length === 0) {
+    throw new Error(`Input '${inputKey}': 'store' must be a list with at least one of the input's field names`);
   }
   const data = inputDef.data || {};
   for (const key of store) {
@@ -711,6 +746,57 @@ function wholeNumber(where: string, value: unknown): bigint {
   throw new Error(`${where} must be a whole number that is not negative, received '${String(value)}'`);
 }
 
+/** The variables an input's checks compare against. Reads only the checks that are well formed. */
+function variablesNamedInChecks(inputDef: AgreementJson["execution"]["inputs"][string]): Set<string> {
+  const names = new Set<string>();
+  if (!Array.isArray(inputDef.checks)) {
+    return names;
+  }
+  for (const check of inputDef.checks as unknown[]) {
+    const to = typeof check === "object" && check !== null && own(check, "to") ? (check as { to: unknown }).to : undefined;
+    const reference = typeof to === "string" ? TIME_VARIABLE_REFERENCE.exec(to) : null;
+    if (reference) names.add(reference[1]);
+  }
+  return names;
+}
+
+/**
+ * The value at creation of a variable that a check compares against, or that
+ * an input replaces through `store`, is a whole number written as one. BigInt()
+ * would read '' as 0, ' 2 ' as 2, '0x10' as 16 and true as 1, and a counter
+ * that starts on such a value does not count what the agreement says.
+ */
+function assertCheckedValuesAreWholeNumbers(
+  inputs: AgreementJson["execution"]["inputs"],
+  storedAtCreation: InitVarInfo[],
+  initValues: Record<string, InitValue>
+): void {
+  const atCreation = new Set(storedAtCreation.filter((info) => info.type === "uint256").map((info) => info.name));
+  for (const [inputKey, inputDef] of Object.entries(inputs)) {
+    const names = variablesNamedInChecks(inputDef);
+    if (Array.isArray(inputDef.store)) {
+      for (const key of inputDef.store as unknown[]) {
+        if (typeof key === "string") names.add(extractVariableName((inputDef.data || {})[key]) || key);
+      }
+    }
+    for (const name of names) {
+      if (!atCreation.has(name)) continue;
+      const value: unknown = initValues[name];
+      if (value === undefined) continue; // reported as a missing value
+      const whole =
+        (typeof value === "bigint" && value >= 0n) ||
+        (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) ||
+        (typeof value === "string" && /^\d+$/.test(value));
+      if (!whole) {
+        throw new Error(
+          `Input '${inputKey}' checks against or stores '${name}', whose value at creation must be a whole number ` +
+          `that is not negative, written as digits. Received '${String(value)}'.`
+        );
+      }
+    }
+  }
+}
+
 /**
  * Conditions for an input's `checks`: comparisons of a submitted number with a
  * constant, a stored variable, or a stored variable plus or minus a constant.
@@ -720,7 +806,8 @@ function buildCheckConditions(
   inputDef: AgreementJson["execution"]["inputs"][string],
   variables: AgreementJson["variables"],
   storedAtCreation: Set<string> | undefined,
-  storedByInputs: Set<string>
+  storedByInputs: Set<string>,
+  firstStoredByInputs: Set<string>
 ): Condition[] {
   const checks = inputDef.checks;
   if (checks === undefined) {
@@ -804,16 +891,19 @@ function buildCheckConditions(
         `execution.initialize.data, or in the 'store' of an input that submits it.`
       );
     }
+    if (!storedAtCreation.has(varName) && !firstStoredByInputs.has(varName)) {
+      throw new Error(
+        `${where}: variable '${varName}' has no value when the agreement is created, and every input that stores it ` +
+        `also checks against it, so none of them could ever be accepted. List it in execution.initialize.data.`
+      );
+    }
 
     const amount = hasPlus ? wholeNumber(`${where}: 'plus'`, check.plus) : hasMinus ? wholeNumber(`${where}: 'minus'`, check.minus) : 0n;
-    if (amount === 0n) {
-      return { op: ops.stored, fieldId: fieldMeta.fieldId, bytesArg: fieldToBytes32(varName) };
-    }
     if (amount >= 2n ** 255n) {
       throw new Error(`${where}: the amount to add or subtract is too large`);
     }
     return {
-      op: ops.offset,
+      op: ops.stored,
       fieldId: fieldMeta.fieldId,
       bytesArg: encodeAbiParameters([{ type: "bytes32" }, { type: "int256" }], [fieldToBytes32(varName), hasMinus ? -amount : amount]) as Hex,
     };
