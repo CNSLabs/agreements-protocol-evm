@@ -128,7 +128,20 @@ contracts. The names exported from the package root are the same as in 0.1.4.
 ### Deployments
 
 The bundled deployment registry (`getDeploymentByChainId` and related helpers)
-lists V1.1 on Linea Sepolia (chain 59141). Its record keeps the V1.0 pair it
-replaced under `legacy`. The other four networks still list their V1.0
-deployments, which this client cannot drive with permits: until V1.1 is
-deployed there, pass a V1.1 factory address explicitly on those networks.
+serves V1.1 deployments only:
+
+| Network | Chain | Factory |
+| --- | --- | --- |
+| Linea Sepolia | 59141 | `0x21fa3A97d40c31E98352A06CdcD01687E2AA87c5` |
+| Ethereum Sepolia | 11155111 | `0x7087953E8fbe85673fEe93e5c137A53fEDb8282f` |
+| Base Sepolia | 84532 | `0x85b1494393f4a8451736f4CfaABe1c4f02161a27` |
+
+Each record keeps the V1.0 pair it replaced under `legacy`.
+
+**A network without a V1.1 deployment returns nothing.** Base (8453) and Linea
+(59144) still have only V1.0 deployments, so every lookup returns `null` for
+them and they are absent from `listDeployments` and `getAllFactoryConfigs`. In
+0.1.4 these lookups returned the V1.0 factories. This client cannot drive a
+V1.0 factory with permits, and a V1.0 engine does not enforce a time window,
+so it no longer hands one out. Code that reads the registry for those networks
+must handle `null` until V1.1 is deployed there.

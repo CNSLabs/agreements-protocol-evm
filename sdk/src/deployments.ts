@@ -32,6 +32,13 @@ export interface DeploymentsRegistry {
 }
 
 /**
+ * The contract version this SDK is the client for. Its permit calls, address
+ * prediction and ABIs do not work against another version, and an engine from
+ * before V1.1 does not enforce a time window.
+ */
+const SUPPORTED_CONTRACT_VERSION = "1.1";
+
+/**
  * Load the deployments registry
  */
 function loadDeploymentsRegistry(): DeploymentsRegistry {
@@ -39,14 +46,26 @@ function loadDeploymentsRegistry(): DeploymentsRegistry {
 }
 
 /**
- * Get deployment info by chain ID
+ * The deployments the lookups below serve: those recorded with the contract
+ * version this SDK supports. A network whose recorded deployment is another
+ * version (a V1.0 record has no version) is not served, so a caller gets no
+ * factory there instead of one this SDK cannot use safely.
+ */
+function supportedDeployments(): DeploymentInfo[] {
+  return Object.values(loadDeploymentsRegistry().deployments).filter(
+    (deployment) => deployment.version === SUPPORTED_CONTRACT_VERSION
+  );
+}
+
+/**
+ * Get deployment info by chain ID. Returns null when the network has no
+ * deployment of the contract version this SDK supports.
  */
 export function getDeploymentByChainId(chainId: number | bigint): DeploymentInfo | null {
-  const registry = loadDeploymentsRegistry();
   const chainIdStr = chainId.toString();
   
   // Find deployment by chainId
-  for (const deployment of Object.values(registry.deployments)) {
+  for (const deployment of supportedDeployments()) {
     if (deployment.chainId === chainIdStr) {
       return deployment;
     }
@@ -56,14 +75,13 @@ export function getDeploymentByChainId(chainId: number | bigint): DeploymentInfo
 }
 
 /**
- * Get deployment info by network name
+ * Get deployment info by network name. Returns null when the network has no
+ * deployment of the contract version this SDK supports.
  */
 export function getDeploymentByNetwork(network: string): DeploymentInfo | null {
-  const registry = loadDeploymentsRegistry();
-  
   // Find deployment by network name (case-insensitive)
   const networkLower = network.toLowerCase();
-  for (const deployment of Object.values(registry.deployments)) {
+  for (const deployment of supportedDeployments()) {
     if (deployment.network.toLowerCase() === networkLower) {
       return deployment;
     }
@@ -103,11 +121,10 @@ export function getFactoryConfigByNetwork(network: string): FactoryConfig | null
 }
 
 /**
- * List all registered deployments
+ * List the registered deployments of the contract version this SDK supports
  */
 export function listDeployments(): DeploymentInfo[] {
-  const registry = loadDeploymentsRegistry();
-  return Object.values(registry.deployments);
+  return supportedDeployments();
 }
 
 /**

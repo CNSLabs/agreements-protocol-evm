@@ -144,7 +144,8 @@ Time windows need both sides to know them:
 - **The contracts.** Create the agreement on a V1.1 factory whose engine has
   time conditions. An older engine, V1.0 included, accepts the agreement and
   does not enforce the window: there the party submitting an input can state
-  the time itself.
+  the time itself. The bundled registry only returns V1.1 factories, and
+  returns nothing for a network that has none.
 - **The SDK.** A version of this SDK from before time windows ignores `time`
   and deploys the agreement with no window, without an error.
 
