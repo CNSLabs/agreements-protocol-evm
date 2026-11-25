@@ -1,6 +1,6 @@
 {
   "name": "@shodai-network/agreements-protocol-evm",
-  "version": "0.1.4",
+  "version": "0.2.0-rc.2",
   "description": "TypeScript SDK for the Agreements Protocol",
   "author": "CNS Labs",
   "license": "Apache-2.0",
@@ -15,6 +15,7 @@
   "files": [
     "dist",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE",
     "NOTICE"
   ],
@@ -42,7 +43,7 @@
     "@types/jest": "^29.5.11",
     "@types/minimatch": "^5.1.2",
     "@types/node": "^20.10.6",
-    "ethers": "^6.16.0",
+    "ethers": "^6.17.0",
     "jest": "^29.7.0",
     "ts-jest": "^29.1.1",
     "tsx": "^4.7.0",
@@ -51,6 +52,6 @@
   "dependencies": {
     "@opentelemetry/api": "^1.9.1",
     "dotenv": "^16.3.1",
-    "viem": "2.43.2"
+    "viem": "2.57.20"
   }
 }

@@ -1,0 +1,238 @@
+{
+  "metadata": {
+    "id": "did:example:counted-milestones-v1",
+    "templateId": "did:template:counted-milestones-v1",
+    "version": "1.0.0",
+    "createdAt": "2026-11-20T00:00:00Z",
+    "name": "Grant With A Counted Number Of Milestones",
+    "author": "Agreements Protocol",
+    "description": "A grant whose number of milestones is set when the agreement is created. The same three states repeat for every milestone, and the agreement counts them. Shows checks against stored values and stored number fields."
+  },
+  "variables": {
+    "grantee": {
+      "type": "address",
+      "name": "Grantee",
+      "description": "Ethereum address of the grantee",
+      "validation": {
+        "required": true
+      }
+    },
+    "reviewer": {
+      "type": "address",
+      "name": "Reviewer",
+      "description": "Ethereum address of the reviewer",
+      "validation": {
+        "required": true
+      }
+    },
+    "milestoneCount": {
+      "type": "uint256",
+      "name": "Number Of Milestones",
+      "description": "How many milestones the grant has",
+      "validation": {
+        "required": true
+      }
+    },
+    "currentMilestone": {
+      "type": "uint256",
+      "name": "Current Milestone",
+      "description": "The milestone being worked on, starting at 1",
+      "validation": {
+        "required": true
+      }
+    },
+    "milestone": {
+      "type": "uint256",
+      "name": "Milestone",
+      "description": "The milestone this step belongs to",
+      "validation": {
+        "required": true
+      }
+    },
+    "workNote": {
+      "type": "string",
+      "name": "Work Note",
+      "description": "What was delivered for the milestone",
+      "validation": {
+        "required": true,
+        "minLength": 3
+      }
+    },
+    "reviewNote": {
+      "type": "string",
+      "name": "Review Note",
+      "description": "The reviewer's note",
+      "validation": {
+        "required": true,
+        "minLength": 3
+      }
+    }
+  },
+  "content": {
+    "type": "md",
+    "data": "# Grant With A Counted Number Of Milestones\n\nThe grantee (${variables.grantee}) delivers ${variables.milestoneCount} milestones, one after the other. The reviewer (${variables.reviewer}) accepts each one or asks for changes.\n\nThe agreement is on milestone ${variables.currentMilestone}. Every step names the milestone it belongs to, so a step signed for an earlier milestone cannot be used for a later one.\n\n- Work note: ${variables.workNote}\n- Review note: ${variables.reviewNote}"
+  },
+  "execution": {
+    "states": {
+      "WORK_IN_PROGRESS": {
+        "name": "Work In Progress",
+        "description": "The grantee is working on the current milestone."
+      },
+      "IN_REVIEW": {
+        "name": "In Review",
+        "description": "The reviewer is looking at the work for the current milestone."
+      },
+      "COMPLETED": {
+        "name": "Completed",
+        "description": "Every milestone has been accepted."
+      }
+    },
+    "initialize": {
+      "name": "Initialize Grant",
+      "description": "Store the parties, the number of milestones and the first milestone",
+      "initialState": "WORK_IN_PROGRESS",
+      "data": {
+        "grantee": "${variables.grantee}",
+        "reviewer": "${variables.reviewer}",
+        "milestoneCount": "${variables.milestoneCount}",
+        "currentMilestone": "${variables.currentMilestone}"
+      }
+    },
+    "inputs": {
+      "submitWork": {
+        "type": "VerifiedCredentialEIP712",
+        "schema": "verified-credential-eip712.schema.json",
+        "displayName": "Submit Work",
+        "description": "The grantee submits the work for the current milestone.",
+        "data": {
+          "workNote": "${variables.workNote}",
+          "milestone": "${variables.milestone}"
+        },
+        "issuer": "${variables.grantee.value}",
+        "checks": [
+          {
+            "field": "milestone",
+            "is": "equalTo",
+            "to": "${variables.currentMilestone}"
+          }
+        ]
+      },
+      "requestChanges": {
+        "type": "VerifiedCredentialEIP712",
+        "schema": "verified-credential-eip712.schema.json",
+        "displayName": "Request Changes",
+        "description": "The reviewer sends the work back.",
+        "data": {
+          "reviewNote": "${variables.reviewNote}",
+          "milestone": "${variables.milestone}"
+        },
+        "issuer": "${variables.reviewer.value}",
+        "checks": [
+          {
+            "field": "milestone",
+            "is": "equalTo",
+            "to": "${variables.currentMilestone}"
+          }
+        ]
+      },
+      "acceptMilestone": {
+        "type": "VerifiedCredentialEIP712",
+        "schema": "verified-credential-eip712.schema.json",
+        "displayName": "Accept Milestone",
+        "description": "The reviewer accepts a milestone that is not the last one. The agreement moves on to the next milestone.",
+        "data": {
+          "reviewNote": "${variables.reviewNote}",
+          "milestone": "${variables.milestone}",
+          "currentMilestone": "${variables.currentMilestone}"
+        },
+        "issuer": "${variables.reviewer.value}",
+        "checks": [
+          {
+            "field": "milestone",
+            "is": "equalTo",
+            "to": "${variables.currentMilestone}"
+          },
+          {
+            "field": "milestone",
+            "is": "lessThan",
+            "to": "${variables.milestoneCount}"
+          },
+          {
+            "field": "currentMilestone",
+            "is": "equalTo",
+            "to": "${variables.currentMilestone}",
+            "plus": 1
+          }
+        ],
+        "store": [
+          "currentMilestone"
+        ]
+      },
+      "acceptFinalMilestone": {
+        "type": "VerifiedCredentialEIP712",
+        "schema": "verified-credential-eip712.schema.json",
+        "displayName": "Accept Final Milestone",
+        "description": "The reviewer accepts the last milestone.",
+        "data": {
+          "reviewNote": "${variables.reviewNote}",
+          "milestone": "${variables.milestone}"
+        },
+        "issuer": "${variables.reviewer.value}",
+        "checks": [
+          {
+            "field": "milestone",
+            "is": "equalTo",
+            "to": "${variables.currentMilestone}"
+          },
+          {
+            "field": "milestone",
+            "is": "equalTo",
+            "to": "${variables.milestoneCount}"
+          }
+        ]
+      }
+    },
+    "transitions": [
+      {
+        "from": "WORK_IN_PROGRESS",
+        "to": "IN_REVIEW",
+        "conditions": [
+          {
+            "type": "isValid",
+            "input": "submitWork"
+          }
+        ]
+      },
+      {
+        "from": "IN_REVIEW",
+        "to": "WORK_IN_PROGRESS",
+        "conditions": [
+          {
+            "type": "isValid",
+            "input": "requestChanges"
+          }
+        ]
+      },
+      {
+        "from": "IN_REVIEW",
+        "to": "WORK_IN_PROGRESS",
+        "conditions": [
+          {
+            "type": "isValid",
+            "input": "acceptMilestone"
+          }
+        ]
+      },
+      {
+        "from": "IN_REVIEW",
+        "to": "COMPLETED",
+        "conditions": [
+          {
+            "type": "isValid",
+            "input": "acceptFinalMilestone"
+          }
+        ]
+      }
+    ]
+  }
+}

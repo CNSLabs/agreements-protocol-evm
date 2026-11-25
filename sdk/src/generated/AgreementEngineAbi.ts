@@ -31,8 +31,56 @@ export const AgreementEngineABI = [
     "type": "error"
   },
   {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "target",
+        "type": "address"
+      },
+      {
+        "internalType": "bytes",
+        "name": "returnData",
+        "type": "bytes"
+      }
+    ],
+    "name": "ActionERC20ReturnInvalid",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "target",
+        "type": "address"
+      }
+    ],
+    "name": "ActionTargetHasNoCode",
+    "type": "error"
+  },
+  {
     "inputs": [],
     "name": "ActionTargetZero",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "fromState",
+        "type": "bytes32"
+      },
+      {
+        "internalType": "bytes32",
+        "name": "inputId",
+        "type": "bytes32"
+      },
+      {
+        "internalType": "uint256",
+        "name": "value",
+        "type": "uint256"
+      }
+    ],
+    "name": "ActionValueNotSupported",
     "type": "error"
   },
   {
@@ -60,33 +108,6 @@ export const AgreementEngineABI = [
       }
     ],
     "name": "DuplicateVerifier",
-    "type": "error"
-  },
-  {
-    "inputs": [],
-    "name": "ECDSAInvalidSignature",
-    "type": "error"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "uint256",
-        "name": "length",
-        "type": "uint256"
-      }
-    ],
-    "name": "ECDSAInvalidSignatureLength",
-    "type": "error"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "bytes32",
-        "name": "s",
-        "type": "bytes32"
-      }
-    ],
-    "name": "ECDSAInvalidSignatureS",
     "type": "error"
   },
   {
@@ -136,6 +157,27 @@ export const AgreementEngineABI = [
     "type": "error"
   },
   {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "fieldId",
+        "type": "bytes32"
+      },
+      {
+        "internalType": "uint256",
+        "name": "stored",
+        "type": "uint256"
+      },
+      {
+        "internalType": "int256",
+        "name": "offset",
+        "type": "int256"
+      }
+    ],
+    "name": "OffsetOutOfRange",
+    "type": "error"
+  },
+  {
     "inputs": [],
     "name": "OwnerZero",
     "type": "error"
@@ -154,6 +196,17 @@ export const AgreementEngineABI = [
   {
     "inputs": [],
     "name": "ReentrancyGuardReentrantCall",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "fieldId",
+        "type": "bytes32"
+      }
+    ],
+    "name": "ReservedFieldId",
     "type": "error"
   },
   {
@@ -416,6 +469,25 @@ export const AgreementEngineABI = [
     "inputs": [
       {
         "indexed": true,
+        "internalType": "address",
+        "name": "signer",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "newNonce",
+        "type": "uint256"
+      }
+    ],
+    "name": "PermitsCancelled",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
         "internalType": "bytes32",
         "name": "key",
         "type": "bytes32"
@@ -441,6 +513,19 @@ export const AgreementEngineABI = [
       }
     ],
     "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "cancelPermits",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "newNonce",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable",
     "type": "function"
   },
   {
@@ -798,19 +883,9 @@ export const AgreementEngineABI = [
         "type": "uint256"
       },
       {
-        "internalType": "uint8",
-        "name": "v",
-        "type": "uint8"
-      },
-      {
-        "internalType": "bytes32",
-        "name": "r",
-        "type": "bytes32"
-      },
-      {
-        "internalType": "bytes32",
-        "name": "s",
-        "type": "bytes32"
+        "internalType": "bytes",
+        "name": "signature",
+        "type": "bytes"
       }
     ],
     "name": "submitInputWithPermit",

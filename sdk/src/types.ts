@@ -52,6 +52,14 @@ export enum Op {
   // Sender operations
   SENDER_EQ_VAR_ADDRESS = 16,
   SENDER_IN_ALLOWED_ADDRESSES = 17,
+
+  // UINT256 operations - compare with a stored variable plus or minus a constant.
+  // bytesArg is abi.encode(bytes32 targetFieldId, int256 offset).
+  UINT_EQ_VAR_OFFSET = 18,
+  UINT_GT_VAR_OFFSET = 19,
+  UINT_GTE_VAR_OFFSET = 20,
+  UINT_LT_VAR_OFFSET = 21,
+  UINT_LTE_VAR_OFFSET = 22,
 }
 
 /**
@@ -261,6 +269,49 @@ export interface InitializeConfig {
 }
 
 /**
+ * When an input may be submitted. The contract compares the block time with
+ * each bound when the input is submitted, directly or by permit.
+ *
+ * A bound is either a fixed moment or a stored date:
+ * - a fixed moment is a whole number of seconds since 1970-01-01 UTC (a number
+ *   or a string of digits), or an ISO 8601 date-time with an explicit zone,
+ *   such as "2027-03-01T00:00:00Z";
+ * - a stored date is "${variables.name}", where the variable has type
+ *   `uint256`, holds seconds since 1970-01-01 UTC, and is listed in
+ *   `execution.initialize.data` so that the agreement stores it at creation.
+ */
+export interface InputTimeWindow {
+  /** The input is accepted at this moment and after it. */
+  notBefore?: string | number;
+  /** The input is accepted only before this moment. */
+  before?: string | number;
+}
+
+/** The comparisons an input check can make. */
+export type InputCheckComparison =
+  | "equalTo"
+  | "lessThan"
+  | "lessThanOrEqualTo"
+  | "greaterThan"
+  | "greaterThanOrEqualTo";
+
+/**
+ * A check on one submitted number: `field` `is` `to`, where `to` is a whole
+ * number or "${variables.name}", a `uint256` variable the agreement stores.
+ * With a stored variable, `plus` or `minus` adds or subtracts a whole number
+ * first: `{ field: "round", is: "equalTo", to: "${variables.round}", plus: 1 }`
+ * accepts only the stored round plus one.
+ */
+export interface InputCheck {
+  /** A key of the input's `data` whose type is `uint256`. */
+  field: string;
+  is: InputCheckComparison;
+  to: string | number;
+  plus?: string | number;
+  minus?: string | number;
+}
+
+/**
  * Input definition in execution
  */
 export interface ExecutionInput {
@@ -270,6 +321,12 @@ export interface ExecutionInput {
   description?: string;
   data?: Record<string, string | ExecutionInputFieldDefinition>;
   issuer?: string | string[];
+  /** Limits when the input is accepted. Requires the V1.1 contracts. */
+  time?: InputTimeWindow;
+  /** Checks on submitted numbers, against constants or stored variables. All must hold. */
+  checks?: InputCheck[];
+  /** Keys of `data` whose submitted value the agreement stores when the input is accepted. */
+  store?: string[];
 }
 
 /**
@@ -301,7 +358,7 @@ export interface ExecutionActionWhen {
 export interface ExecutionActionCallEvmCall {
   type: "evmCall";
   target: string;        // template ref or literal address
-  value?: string;        // stringified uint256 (defaults to "0")
+  value?: string;        // must be "0" or absent: agreements cannot send ETH
   abi: unknown[];        // JSON ABI array (subset is fine)
   method: string;        // function name
   args: string[];        // template refs or literals, coerced by ABI input types

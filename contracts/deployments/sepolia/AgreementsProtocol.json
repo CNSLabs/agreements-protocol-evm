@@ -1,8 +1,17 @@
 {
-  "implementation": "0x1c2961AC5e2fBE47b3C0654d7dF543dB04F031A6",
-  "factory": "0x76dAA59C02d902e7063E6328D2E64ACee6CC121e",
+  "implementation": "0x1D123e2164f0C83585483F706C510289CE8C7aA6",
+  "factory": "0x7087953E8fbe85673fEe93e5c137A53fEDb8282f",
   "chainId": "11155111",
   "network": "sepolia",
-  "deployedAt": "2026-05-26T14:28:37.794Z",
-  "deployer": "0x3793901C5eBB531F6CE5cE6E14a900BD3750591b"
+  "deployedAt": "2026-11-24T21:24:00.771Z",
+  "deployer": "0x3793901C5eBB531F6CE5cE6E14a900BD3750591b",
+  "version": "1.1",
+  "legacy": {
+    "version": "1.0",
+    "implementation": "0x1c2961AC5e2fBE47b3C0654d7dF543dB04F031A6",
+    "factory": "0x76dAA59C02d902e7063E6328D2E64ACee6CC121e",
+    "deployedAt": "2026-05-26T14:28:37.794Z",
+    "deployer": "0x3793901C5eBB531F6CE5cE6E14a900BD3750591b",
+    "deprecated": true
+  }
 }

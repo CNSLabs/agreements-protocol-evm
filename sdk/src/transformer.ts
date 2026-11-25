@@ -24,11 +24,20 @@ import {
   InputFieldMetadata,
   type ExecutionAction,
   type ActionInit,
+  type InputTimeWindow,
+  type InputCheck,
 } from "./types.js";
 import { encodeFieldValue } from "./payload-builder.js";
 
 const ZERO_BYTES32 =
   "0x0000000000000000000000000000000000000000000000000000000000000000" as Hex;
+
+/**
+ * The field name the V1.1 engine reserves for the block time. A condition on
+ * this field compares `block.timestamp` instead of a submitted value, and the
+ * engine refuses an agreement that declares a field or stored variable with it.
+ */
+const BLOCK_TIME_FIELD_NAME = "block.timestamp";
 
 /**
  * Supported value types for initialization variables
@@ -92,10 +101,16 @@ export function transformAgreementToOnChainParams(
   }
 
   // 5. Build initVars array for contract
+  assertCheckedValuesAreWholeNumbers(execution.inputs, requiredInitVars, initValues || {});
   const initVars = buildInitVars(requiredInitVars, initValues || {});
 
   // 6. Transform inputs to InputDefs (all inputs treated uniformly now)
-  const inputDefs = transformInputs(execution.inputs, agreement.variables);
+  const inputDefs = transformInputs(
+    execution.inputs,
+    agreement.variables,
+    requiredInitVars.map((v) => v.name)
+  );
+  assertStoredDatesArePlausible(execution.inputs, initValues || {});
 
   // 7. Transform transitions
   const transitions = transformTransitions(execution.transitions);
@@ -163,11 +178,53 @@ export function buildInitVars(
 /**
  * Transform the execution.inputs object into InputDef[] array
  * All inputs are processed uniformly - conditions based on issuer field
+ *
+ * @param storedVariables - Names of the variables the agreement stores at
+ *   creation (those in `execution.initialize.data`). Needed only when an input
+ *   has a `time` bound that names a variable.
  */
 export function transformInputs(
   inputs: AgreementJson["execution"]["inputs"],
-  variables: AgreementJson["variables"]
+  variables: AgreementJson["variables"],
+  storedVariables?: Iterable<string>
 ): InputDef[] {
+  const stored = storedVariables === undefined ? undefined : new Set(storedVariables);
+  // A variable an input stores can be compared against as well as one stored at creation.
+  const storedByInputs = new Set<string>();
+  // The variables some input stores without itself checking against them: an
+  // input like that can give the variable its first value.
+  const firstStoredByInputs = new Set<string>();
+  const storedTypes = new Map<string, { fType: FieldType; by: string }>();
+  for (const [inputKey, inputDef] of Object.entries(inputs)) {
+    const checked = variablesNamedInChecks(inputDef);
+    for (const key of storedFieldKeys(inputKey, inputDef)) {
+      const fieldMeta = resolveInputFieldMetadata(key, (inputDef.data || {})[key], variables);
+      const name = fieldMeta.name;
+      // A stored value takes the type of the field that wrote it. A field of
+      // another type under the same name would make every later check on that
+      // name fail for good.
+      const declared = Object.prototype.hasOwnProperty.call(variables, name) ? variables[name] : undefined;
+      if (declared && mapVariableTypeToFieldType(declared.type) !== fieldMeta.fType) {
+        throw new Error(
+          `Input '${inputKey}': stored field '${key}' is not of the type of variable '${name}' ('${declared.type}'), ` +
+          `whose stored value it would replace. Write the field as '\${variables.${name}}'.`
+        );
+      }
+      const earlier = storedTypes.get(name);
+      if (earlier && earlier.fType !== fieldMeta.fType) {
+        throw new Error(
+          `Input '${inputKey}': stored field '${key}' has another type than the field of the same name that ` +
+          `input '${earlier.by}' stores. Both write the same stored value.`
+        );
+      }
+      storedTypes.set(name, { fType: fieldMeta.fType, by: inputKey });
+      storedByInputs.add(name);
+      if (!checked.has(name)) {
+        firstStoredByInputs.add(name);
+      }
+    }
+  }
+
   return Object.entries(inputs).map(([inputKey, inputDef]) => {
     const id = keccak256(stringToHex(inputKey)) as Hex;
 
@@ -175,8 +232,18 @@ export function transformInputs(
     const fields: InputFieldDef[] = [];
     const conditions: Condition[] = [];
     
+    const storeKeys = new Set(storedFieldKeys(inputKey, inputDef));
     for (const [fieldKey, fieldRef] of Object.entries(inputDef.data || {})) {
       const fieldMeta = resolveInputFieldMetadata(fieldKey, fieldRef, variables);
+      if (storeKeys.has(fieldKey)) {
+        if (!fieldMeta.required) {
+          throw new Error(
+            `Input '${inputKey}': stored field '${fieldKey}' must be required. An optional field can be left out, ` +
+            `and the stored value would then not change.`
+          );
+        }
+        fieldMeta.persist = true;
+      }
       const varName = extractVariableName(fieldRef);
       const varDef = varName ? variables[varName] : null;
 
@@ -208,6 +275,8 @@ export function transformInputs(
     }
 
     conditions.push(...buildIssuerConditions(inputDef.issuer, variables));
+    conditions.push(...buildTimeConditions(inputKey, inputDef.time, variables, stored));
+    conditions.push(...buildCheckConditions(inputKey, inputDef, variables, stored, storedByInputs, firstStoredByInputs));
 
     return {
       id,
@@ -305,9 +374,11 @@ export function getInputFieldMetadata(
     throw new Error(`Input '${inputId}' not found in agreement`);
   }
 
-  return Object.entries(input.data || {}).map(([fieldKey, fieldRef]) =>
-    resolveInputFieldMetadata(fieldKey, fieldRef, agreement.variables)
-  );
+  const storeKeys = new Set(storedFieldKeys(inputId, input));
+  return Object.entries(input.data || {}).map(([fieldKey, fieldRef]) => {
+    const metadata = resolveInputFieldMetadata(fieldKey, fieldRef, agreement.variables);
+    return storeKeys.has(fieldKey) ? { ...metadata, persist: true } : metadata;
+  });
 }
 
 /**
@@ -347,6 +418,12 @@ function resolveInputFieldMetadata(
   variables: AgreementJson["variables"]
 ): InputFieldMetadata {
   const varName = extractVariableName(fieldRef);
+  if ((varName || fieldKey) === BLOCK_TIME_FIELD_NAME) {
+    throw new Error(
+      `'${BLOCK_TIME_FIELD_NAME}' is reserved for the block time and cannot be an input field. ` +
+      `To limit when an input is accepted, give the input a 'time' window.`
+    );
+  }
   const varDef = varName ? variables[varName] : null;
   const varType = varDef?.type ?? getInlineVariableType(fieldRef);
   const validation = varDef?.validation ?? getInlineValidation(fieldRef);
@@ -422,6 +499,415 @@ function buildIssuerConditions(
       ) as Hex,
     },
   ];
+}
+
+const TIME_BOUNDS = {
+  // The input is accepted from the moment on: block time >= moment.
+  notBefore: { fixed: Op.UINT_GTE_CONST, stored: Op.UINT_GTE_VAR },
+  // The input is accepted until the moment: block time < moment.
+  before: { fixed: Op.UINT_LT_CONST, stored: Op.UINT_LT_VAR },
+} as const;
+
+const ISO_DATE_TIME_WITH_ZONE =
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d+))?)?(Z|[+-]\d{2}:\d{2})$/;
+
+// A bound that names a stored date is exactly one variable reference, nothing around it.
+const TIME_VARIABLE_REFERENCE = /^\$\{variables\.(\w+)(?:\.value)?\}$/;
+
+// Fixed moments and stored dates outside this range are almost always a mistake:
+// milliseconds given as seconds, a date written as digits, or an empty value.
+const EARLIEST_MOMENT = 1_000_000_000n; // 2001-09-09
+const LATEST_MOMENT = 10_000_000_000n; // 2286-11-20
+
+function assertPlausibleMoment(where: string, seconds: bigint): void {
+  if (seconds < EARLIEST_MOMENT || seconds >= LATEST_MOMENT) {
+    throw new Error(
+      `${where} is ${seconds} seconds since 1970-01-01 UTC, which is outside 2001 to 2286. ` +
+      `A moment is given in seconds, not milliseconds, and not as a date written in digits.`
+    );
+  }
+}
+
+/**
+ * Seconds since 1970-01-01 UTC for a fixed moment in a `time` window.
+ */
+function parseFixedMoment(inputKey: string, bound: string, value: unknown): bigint {
+  const where = `Input '${inputKey}': time.${bound}`;
+  if (typeof value === "number") {
+    if (!Number.isSafeInteger(value) || value < 0) {
+      throw new Error(`${where} must be a whole number of seconds since 1970-01-01 UTC, received ${value}`);
+    }
+    return BigInt(value);
+  }
+  if (typeof value !== "string") {
+    throw new Error(`${where} must be a number of seconds, an ISO 8601 date-time or a variable reference`);
+  }
+  if (/^\d+$/.test(value)) {
+    return BigInt(value);
+  }
+  // A date-time without a zone would mean a different moment on each machine.
+  const parts = ISO_DATE_TIME_WITH_ZONE.exec(value);
+  const ms = parts ? Date.parse(value) : NaN;
+  if (!parts || Number.isNaN(ms) || ms < 0) {
+    throw new Error(
+      `${where} '${value}' is not a moment the SDK can read. Use seconds since 1970-01-01 UTC, ` +
+      `an ISO 8601 date-time with a zone such as '2027-03-01T00:00:00Z', or '\${variables.name}'.`
+    );
+  }
+  if (parts[7] !== undefined && /[1-9]/.test(parts[7])) {
+    throw new Error(`${where} '${value}' has a fraction of a second; the contract compares whole seconds`);
+  }
+  // Date.parse moves a day that does not exist into the next month. Read the
+  // moment back in the zone it was written in and require the same fields.
+  const zone = parts[8] === "Z" ? 0 : (parts[8][0] === "-" ? -1 : 1) * (Number(parts[8].slice(1, 3)) * 60 + Number(parts[8].slice(4, 6)));
+  const local = new Date(ms + zone * 60_000);
+  const written = [parts[1], parts[2], parts[3], parts[4], parts[5], parts[6] ?? "0"].map(Number);
+  const read = [local.getUTCFullYear(), local.getUTCMonth() + 1, local.getUTCDate(), local.getUTCHours(), local.getUTCMinutes(), local.getUTCSeconds()];
+  if (written.some((field, i) => field !== read[i])) {
+    throw new Error(`${where} '${value}' is not a date and time that exists`);
+  }
+  return BigInt(ms / 1000);
+}
+
+/**
+ * A stored date that a time window names is checked when the agreement is
+ * built: an empty value would be stored as 0 and leave the window meaningless.
+ */
+function assertStoredDatesArePlausible(
+  inputs: AgreementJson["execution"]["inputs"],
+  initValues: Record<string, InitValue>
+): void {
+  for (const [inputKey, inputDef] of Object.entries(inputs)) {
+    const time = inputDef.time;
+    if (typeof time !== "object" || time === null) continue;
+    for (const bound of ["notBefore", "before"] as const) {
+      const value = Object.prototype.hasOwnProperty.call(time, bound) ? time[bound] : undefined;
+      const reference = typeof value === "string" ? TIME_VARIABLE_REFERENCE.exec(value) : null;
+      if (!reference) continue;
+      const initValue = initValues[reference[1]];
+      const where = `Input '${inputKey}': time.${bound} names '${reference[1]}', whose value`;
+      if (typeof initValue !== "bigint" && !(typeof initValue === "string" && /^\d+$/.test(initValue))) {
+        throw new Error(`${where} must be a whole number of seconds since 1970-01-01 UTC, received '${String(initValue)}'`);
+      }
+      assertPlausibleMoment(where, BigInt(initValue));
+    }
+  }
+}
+
+/**
+ * Conditions for an input's `time` window. Each compares the block time, which
+ * the engine reads in place of a submitted field when a condition names the
+ * reserved block-time field.
+ */
+function buildTimeConditions(
+  inputKey: string,
+  time: InputTimeWindow | undefined,
+  variables: AgreementJson["variables"],
+  storedVariables: Set<string> | undefined
+): Condition[] {
+  if (time === undefined) {
+    return [];
+  }
+  if (typeof time !== "object" || time === null || Array.isArray(time)) {
+    throw new Error(`Input '${inputKey}': 'time' must be an object with 'notBefore', 'before' or both`);
+  }
+  const unknown = Object.keys(time).filter((key) => !Object.prototype.hasOwnProperty.call(TIME_BOUNDS, key));
+  if (unknown.length > 0) {
+    throw new Error(
+      `Input '${inputKey}': unknown time bound '${unknown[0]}'. Use 'notBefore' (accepted from that moment on) ` +
+      `or 'before' (accepted until that moment).`
+    );
+  }
+
+  const fieldId = fieldToBytes32(BLOCK_TIME_FIELD_NAME);
+  const conditions: Condition[] = [];
+  const fixed: { notBefore?: bigint; before?: bigint } = {};
+
+  const stored: { notBefore?: string; before?: string } = {};
+  for (const bound of ["notBefore", "before"] as const) {
+    // Own properties only: the window is what the hashed document says.
+    if (!Object.prototype.hasOwnProperty.call(time, bound) || time[bound] === undefined) {
+      continue;
+    }
+    const value = time[bound];
+    const reference = typeof value === "string" ? TIME_VARIABLE_REFERENCE.exec(value) : null;
+    if (typeof value === "string" && !reference && value.includes("${")) {
+      throw new Error(
+        `Input '${inputKey}': time.${bound} '${value}' must be exactly one variable reference such as ` +
+        `'\${variables.dueDate}'. Arithmetic and text around a reference are not supported.`
+      );
+    }
+    const varName = reference ? reference[1] : "";
+    if (!varName) {
+      const seconds = parseFixedMoment(inputKey, bound, value);
+      assertPlausibleMoment(`Input '${inputKey}': time.${bound}`, seconds);
+      fixed[bound] = seconds;
+      conditions.push({
+        op: TIME_BOUNDS[bound].fixed,
+        fieldId,
+        bytesArg: encodeAbiParameters([{ type: "uint256" }], [seconds]) as Hex,
+      });
+      continue;
+    }
+
+    const where = `Input '${inputKey}': time.${bound}`;
+    const varDef = variables[varName];
+    if (!varDef) {
+      throw new Error(`${where} references unknown variable '${varName}'`);
+    }
+    if (varDef.type !== "uint256") {
+      throw new Error(
+        `${where}: variable '${varName}' must be type 'uint256' holding seconds since 1970-01-01 UTC, ` +
+        `received '${varDef.type}'`
+      );
+    }
+    if (storedVariables === undefined) {
+      throw new Error(
+        `${where} names variable '${varName}', and transformInputs was not told which variables the agreement ` +
+        `stores. Pass the names in execution.initialize.data, or use transformAgreementToOnChainParams.`
+      );
+    }
+    if (!storedVariables.has(varName)) {
+      throw new Error(
+        `${where}: variable '${varName}' is not stored when the agreement is created, so the input could never ` +
+        `be accepted. List it in execution.initialize.data.`
+      );
+    }
+    stored[bound] = varName;
+    conditions.push({
+      op: TIME_BOUNDS[bound].stored,
+      fieldId,
+      bytesArg: fieldToBytes32(varName),
+    });
+  }
+
+  if (conditions.length === 0) {
+    throw new Error(`Input '${inputKey}': 'time' needs 'notBefore', 'before' or both`);
+  }
+  if (stored.notBefore !== undefined && stored.notBefore === stored.before) {
+    throw new Error(
+      `Input '${inputKey}': time.notBefore and time.before name the same variable '${stored.before}', ` +
+      `so the input could never be accepted`
+    );
+  }
+  if (fixed.notBefore !== undefined && fixed.before !== undefined && fixed.notBefore >= fixed.before) {
+    throw new Error(
+      `Input '${inputKey}': time.notBefore is not earlier than time.before, so the input could never be accepted`
+    );
+  }
+  return conditions;
+}
+
+// A check against a stored variable always uses an offset code, with an offset
+// of 0 when the check has no 'plus' or 'minus'. An engine from before these
+// codes refuses to create the agreement. With the plain *_VAR codes it would
+// accept it, and V1.0 would read a check differently: it stores an input's
+// fields before it evaluates the conditions, so a check against a variable the
+// same input stores would compare the new value with itself.
+const CHECK_OPS = {
+  equalTo: { fixed: Op.UINT_EQ_CONST, stored: Op.UINT_EQ_VAR_OFFSET },
+  greaterThan: { fixed: Op.UINT_GT_CONST, stored: Op.UINT_GT_VAR_OFFSET },
+  greaterThanOrEqualTo: { fixed: Op.UINT_GTE_CONST, stored: Op.UINT_GTE_VAR_OFFSET },
+  lessThan: { fixed: Op.UINT_LT_CONST, stored: Op.UINT_LT_VAR_OFFSET },
+  lessThanOrEqualTo: { fixed: Op.UINT_LTE_CONST, stored: Op.UINT_LTE_VAR_OFFSET },
+} as const;
+const CHECK_KEYS = ["field", "is", "to", "plus", "minus"];
+const own = (object: object, key: string) => Object.prototype.hasOwnProperty.call(object, key);
+
+/** The keys of an input's `data` that its `store` list names. */
+function storedFieldKeys(inputKey: string, inputDef: AgreementJson["execution"]["inputs"][string]): string[] {
+  const store = inputDef.store;
+  if (store === undefined) {
+    return [];
+  }
+  if (!Array.isArray(store) || store.length === 0) {
+    throw new Error(`Input '${inputKey}': 'store' must be a list with at least one of the input's field names`);
+  }
+  const data = inputDef.data || {};
+  for (const key of store) {
+    if (typeof key !== "string" || !own(data, key)) {
+      throw new Error(`Input '${inputKey}': 'store' names '${String(key)}', which is not a field of this input`);
+    }
+  }
+  if (new Set(store).size !== store.length) {
+    throw new Error(`Input '${inputKey}': 'store' names a field twice`);
+  }
+  return store;
+}
+
+/** A whole number that is not negative, from a number or a string of digits. */
+function wholeNumber(where: string, value: unknown): bigint {
+  if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) {
+    return BigInt(value);
+  }
+  if (typeof value === "string" && /^\d+$/.test(value)) {
+    return BigInt(value);
+  }
+  throw new Error(`${where} must be a whole number that is not negative, received '${String(value)}'`);
+}
+
+/** The variables an input's checks compare against. Reads only the checks that are well formed. */
+function variablesNamedInChecks(inputDef: AgreementJson["execution"]["inputs"][string]): Set<string> {
+  const names = new Set<string>();
+  if (!Array.isArray(inputDef.checks)) {
+    return names;
+  }
+  for (const check of inputDef.checks as unknown[]) {
+    const to = typeof check === "object" && check !== null && own(check, "to") ? (check as { to: unknown }).to : undefined;
+    const reference = typeof to === "string" ? TIME_VARIABLE_REFERENCE.exec(to) : null;
+    if (reference) names.add(reference[1]);
+  }
+  return names;
+}
+
+/**
+ * The value at creation of a variable that a check compares against, or that
+ * an input replaces through `store`, is a whole number written as one. BigInt()
+ * would read '' as 0, ' 2 ' as 2, '0x10' as 16 and true as 1, and a counter
+ * that starts on such a value does not count what the agreement says.
+ */
+function assertCheckedValuesAreWholeNumbers(
+  inputs: AgreementJson["execution"]["inputs"],
+  storedAtCreation: InitVarInfo[],
+  initValues: Record<string, InitValue>
+): void {
+  const atCreation = new Set(storedAtCreation.filter((info) => info.type === "uint256").map((info) => info.name));
+  for (const [inputKey, inputDef] of Object.entries(inputs)) {
+    const names = variablesNamedInChecks(inputDef);
+    if (Array.isArray(inputDef.store)) {
+      for (const key of inputDef.store as unknown[]) {
+        if (typeof key === "string") names.add(extractVariableName((inputDef.data || {})[key]) || key);
+      }
+    }
+    for (const name of names) {
+      if (!atCreation.has(name)) continue;
+      const value: unknown = initValues[name];
+      if (value === undefined) continue; // reported as a missing value
+      const whole =
+        (typeof value === "bigint" && value >= 0n) ||
+        (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) ||
+        (typeof value === "string" && /^\d+$/.test(value));
+      if (!whole) {
+        throw new Error(
+          `Input '${inputKey}' checks against or stores '${name}', whose value at creation must be a whole number ` +
+          `that is not negative, written as digits. Received '${String(value)}'.`
+        );
+      }
+    }
+  }
+}
+
+/**
+ * Conditions for an input's `checks`: comparisons of a submitted number with a
+ * constant, a stored variable, or a stored variable plus or minus a constant.
+ */
+function buildCheckConditions(
+  inputKey: string,
+  inputDef: AgreementJson["execution"]["inputs"][string],
+  variables: AgreementJson["variables"],
+  storedAtCreation: Set<string> | undefined,
+  storedByInputs: Set<string>,
+  firstStoredByInputs: Set<string>
+): Condition[] {
+  const checks = inputDef.checks;
+  if (checks === undefined) {
+    return [];
+  }
+  if (!Array.isArray(checks) || checks.length === 0) {
+    throw new Error(`Input '${inputKey}': 'checks' must be a list with at least one check`);
+  }
+  const data = inputDef.data || {};
+  return checks.map((check: InputCheck, index) => {
+    const where = `Input '${inputKey}': checks[${index}]`;
+    if (typeof check !== "object" || check === null || Array.isArray(check)) {
+      throw new Error(`${where} must be an object with 'field', 'is' and 'to'`);
+    }
+    const unknown = Object.keys(check).filter((key) => !CHECK_KEYS.includes(key));
+    if (unknown.length > 0) {
+      throw new Error(`${where}: unknown key '${unknown[0]}'. A check has 'field', 'is', 'to' and optionally 'plus' or 'minus'.`);
+    }
+    for (const key of ["field", "is", "to"]) {
+      if (!own(check, key)) throw new Error(`${where} needs '${key}'`);
+    }
+
+    // The field being checked.
+    if (typeof check.field !== "string" || !own(data, check.field)) {
+      throw new Error(`${where}: '${String(check.field)}' is not a field of this input`);
+    }
+    const fieldMeta = resolveInputFieldMetadata(check.field, data[check.field], variables);
+    if (fieldMeta.fType !== FieldType.UINT256) {
+      throw new Error(`${where}: field '${check.field}' must be type 'uint256'`);
+    }
+    if (!fieldMeta.required) {
+      throw new Error(
+        `${where}: field '${check.field}' must be required. The contract skips a check on an optional field that is left out.`
+      );
+    }
+
+    // The comparison.
+    if (typeof check.is !== "string" || !own(CHECK_OPS, check.is)) {
+      throw new Error(`${where}: unknown comparison '${String(check.is)}'. Use one of ${Object.keys(CHECK_OPS).join(", ")}.`);
+    }
+    const ops = CHECK_OPS[check.is];
+    const hasPlus = own(check, "plus") && check.plus !== undefined;
+    const hasMinus = own(check, "minus") && check.minus !== undefined;
+    if (hasPlus && hasMinus) {
+      throw new Error(`${where} has both 'plus' and 'minus'; use one`);
+    }
+
+    // What it is compared with.
+    const reference = typeof check.to === "string" ? TIME_VARIABLE_REFERENCE.exec(check.to) : null;
+    if (typeof check.to === "string" && !reference && check.to.includes("${")) {
+      throw new Error(
+        `${where}: 'to' is '${check.to}', which must be exactly one variable reference such as '\${variables.round}'. ` +
+        `Use 'plus' or 'minus' for arithmetic.`
+      );
+    }
+    if (!reference) {
+      if (hasPlus || hasMinus) {
+        throw new Error(`${where}: 'plus' and 'minus' apply to a stored variable; write the constant itself in 'to'`);
+      }
+      const constant = wholeNumber(`${where}: 'to'`, check.to);
+      return { op: ops.fixed, fieldId: fieldMeta.fieldId, bytesArg: encodeAbiParameters([{ type: "uint256" }], [constant]) as Hex };
+    }
+
+    const varName = reference[1];
+    const varDef = variables[varName];
+    if (!varDef) {
+      throw new Error(`${where}: 'to' references unknown variable '${varName}'`);
+    }
+    if (varDef.type !== "uint256") {
+      throw new Error(`${where}: variable '${varName}' must be type 'uint256', received '${varDef.type}'`);
+    }
+    if (storedAtCreation === undefined) {
+      throw new Error(
+        `${where} names variable '${varName}', and transformInputs was not told which variables the agreement ` +
+        `stores. Pass the names in execution.initialize.data, or use transformAgreementToOnChainParams.`
+      );
+    }
+    if (!storedAtCreation.has(varName) && !storedByInputs.has(varName)) {
+      throw new Error(
+        `${where}: variable '${varName}' is never stored, so the input could never be accepted. List it in ` +
+        `execution.initialize.data, or in the 'store' of an input that submits it.`
+      );
+    }
+    if (!storedAtCreation.has(varName) && !firstStoredByInputs.has(varName)) {
+      throw new Error(
+        `${where}: variable '${varName}' has no value when the agreement is created, and every input that stores it ` +
+        `also checks against it, so none of them could ever be accepted. List it in execution.initialize.data.`
+      );
+    }
+
+    const amount = hasPlus ? wholeNumber(`${where}: 'plus'`, check.plus) : hasMinus ? wholeNumber(`${where}: 'minus'`, check.minus) : 0n;
+    if (amount >= 2n ** 255n) {
+      throw new Error(`${where}: the amount to add or subtract is too large`);
+    }
+    return {
+      op: ops.stored,
+      fieldId: fieldMeta.fieldId,
+      bytesArg: encodeAbiParameters([{ type: "bytes32" }, { type: "int256" }], [fieldToBytes32(varName), hasMinus ? -amount : amount]) as Hex,
+    };
+  });
 }
 
 /**
@@ -509,6 +995,15 @@ export function transformActions(
   return actions.map((a) => {
     if (a.call.type !== "evmCall") {
       throw new Error(`Unsupported action call type: ${(a.call as any).type}`);
+    }
+
+    // The contracts cannot hold ETH, and V1.1 refuses to create an agreement
+    // whose action forwards any.
+    if (BigInt(a.call.value ?? "0") !== 0n) {
+      throw new Error(
+        `Action '${a.id}' forwards ETH (value ${a.call.value}), which agreements cannot do: ` +
+        `set its value to "0" or leave it out`
+      );
     }
 
     const abi = a.call.abi as any[];

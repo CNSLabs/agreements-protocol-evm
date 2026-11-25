@@ -1,0 +1,135 @@
+{
+  "metadata": {
+    "id": "did:example:delivery-deadline-v1",
+    "templateId": "did:template:delivery-deadline-v1",
+    "version": "1.0.0",
+    "createdAt": "2026-11-20T00:00:00Z",
+    "name": "Delivery With A Deadline",
+    "author": "Agreements Protocol",
+    "description": "A supplier delivers before a due date fixed when the agreement is created. From the due date on, the buyer may record the delivery as late. Shows time windows on inputs."
+  },
+  "variables": {
+    "supplier": {
+      "type": "address",
+      "name": "Supplier",
+      "description": "Ethereum address of the supplier",
+      "validation": {
+        "required": true
+      }
+    },
+    "buyer": {
+      "type": "address",
+      "name": "Buyer",
+      "description": "Ethereum address of the buyer",
+      "validation": {
+        "required": true
+      }
+    },
+    "dueDate": {
+      "type": "uint256",
+      "name": "Due Date",
+      "description": "Delivery deadline, in seconds since 1970-01-01 UTC",
+      "validation": {
+        "required": true
+      }
+    },
+    "deliveryNote": {
+      "type": "string",
+      "name": "Delivery Note",
+      "description": "What was delivered",
+      "validation": {
+        "required": true,
+        "minLength": 3
+      }
+    },
+    "lateNote": {
+      "type": "string",
+      "name": "Late Delivery Note",
+      "description": "Why the delivery is recorded as late",
+      "validation": {
+        "required": true,
+        "minLength": 3
+      }
+    }
+  },
+  "content": {
+    "type": "md",
+    "data": "# Delivery With A Deadline\n\nThe supplier (${variables.supplier}) delivers to the buyer (${variables.buyer}) before the due date, ${variables.dueDate} (seconds since 1970-01-01 UTC).\n\nIf nothing has been delivered when the due date arrives, the buyer may record the delivery as late.\n\n- Delivery note: ${variables.deliveryNote}\n- Late delivery note: ${variables.lateNote}"
+  },
+  "execution": {
+    "states": {
+      "AWAITING_DELIVERY": {
+        "name": "Awaiting Delivery",
+        "description": "The supplier has until the due date to deliver."
+      },
+      "DELIVERED": {
+        "name": "Delivered",
+        "description": "The supplier delivered before the due date."
+      },
+      "LATE": {
+        "name": "Late",
+        "description": "The due date passed without a delivery."
+      }
+    },
+    "initialize": {
+      "name": "Initialize Delivery",
+      "description": "Store the parties and the due date",
+      "initialState": "AWAITING_DELIVERY",
+      "data": {
+        "supplier": "${variables.supplier}",
+        "buyer": "${variables.buyer}",
+        "dueDate": "${variables.dueDate}"
+      }
+    },
+    "inputs": {
+      "deliver": {
+        "type": "VerifiedCredentialEIP712",
+        "schema": "verified-credential-eip712.schema.json",
+        "displayName": "Deliver",
+        "description": "The supplier records the delivery. Accepted only before the due date.",
+        "data": {
+          "deliveryNote": "${variables.deliveryNote}"
+        },
+        "issuer": "${variables.supplier.value}",
+        "time": {
+          "before": "${variables.dueDate}"
+        }
+      },
+      "declareLate": {
+        "type": "VerifiedCredentialEIP712",
+        "schema": "verified-credential-eip712.schema.json",
+        "displayName": "Declare Late",
+        "description": "The buyer records that nothing was delivered in time. Accepted from the due date on.",
+        "data": {
+          "lateNote": "${variables.lateNote}"
+        },
+        "issuer": "${variables.buyer.value}",
+        "time": {
+          "notBefore": "${variables.dueDate}"
+        }
+      }
+    },
+    "transitions": [
+      {
+        "from": "AWAITING_DELIVERY",
+        "to": "DELIVERED",
+        "conditions": [
+          {
+            "type": "isValid",
+            "input": "deliver"
+          }
+        ]
+      },
+      {
+        "from": "AWAITING_DELIVERY",
+        "to": "LATE",
+        "conditions": [
+          {
+            "type": "isValid",
+            "input": "declareLate"
+          }
+        ]
+      }
+    ]
+  }
+}

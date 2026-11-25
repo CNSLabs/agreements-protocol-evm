@@ -12,6 +12,7 @@
     "test:fork": "bash scripts/test-fork.sh",
     "test:gas": "hardhat test --grep 'gas' || true",
     "gas:check": "hardhat test && npx hardhat run scripts/check-gas-thresholds.ts",
+    "check:deployed": "hardhat run scripts/check-deployed-code.ts",
     "deploy": "hardhat run scripts/deploy.ts",
     "deploy:local": "hardhat run scripts/deploy.ts --network localhost",
     "deploy:lineaSepolia": "hardhat run scripts/deploy.ts --network lineaSepolia",
@@ -38,7 +39,7 @@
   "author": "",
   "license": "SEE LICENSE IN LICENSE",
   "dependencies": {
-    "@openzeppelin/contracts": "^5.0.0"
+    "@openzeppelin/contracts": "5.4.0"
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox": "^4.0.0",
@@ -48,8 +49,9 @@
     "@types/chai": "^4.3.20",
     "chai": "^4.5.0",
     "dotenv": "^16.3.1",
-    "hardhat": "^2.19.0",
+    "hardhat": "^2.29.2",
     "ts-node": "^10.9.2",
-    "typescript": "^5.3.0"
+    "typescript": "^5.3.0",
+    "viem": "2.57.20"
   }
 }

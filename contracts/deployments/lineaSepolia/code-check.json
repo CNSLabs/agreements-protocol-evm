@@ -1,0 +1,86 @@
+{
+  "network": "lineaSepolia",
+  "chainId": "59141",
+  "checkedAt": "2026-11-20T23:59:48.282Z",
+  "record": {
+    "version": "1.1",
+    "implementation": "0xB56C929CD240e6255BD5fdc471507CF21ebd4E57",
+    "factory": "0x21fa3A97d40c31E98352A06CdcD01687E2AA87c5",
+    "deployedAt": "2026-11-20T23:59:33.927Z",
+    "deployer": "0x3793901C5eBB531F6CE5cE6E14a900BD3750591b"
+  },
+  "build": {
+    "commit": "2aa31edaa8075a5ae7b7a50abd2fcf96f5068461",
+    "contractSourceTree": "c9c592eb1d8ea0efa841826b70b97583ef3a8f21",
+    "uncommittedSourceChanges": false,
+    "solc": "0.8.24+commit.e11b9ed9",
+    "optimizer": {
+      "enabled": true,
+      "runs": 200
+    },
+    "viaIR": true,
+    "evmVersion": "cancun",
+    "openZeppelin": "5.4.0"
+  },
+  "contracts": [
+    {
+      "contract": "AgreementEngine",
+      "address": "0xB56C929CD240e6255BD5fdc471507CF21ebd4E57",
+      "codeBytes": 17378,
+      "codeMatchesBuild": true,
+      "chainCodeHash": "0x7559c2dd9fd89249e04600dd1e73086a756439c199cc16b7c08f0efcf05e6a2b",
+      "comparedCodeHash": "0xbbb6c8ba00cac58449452fec90d714472f96862095eb3b4328da680902642a39",
+      "immutableBytesSetAside": 224,
+      "immutableValues": [
+        "0xde312754a0611198b302829ff8074ee87f4de7bebba837e3a59c33b0f1f40168",
+        "0x000000000000000000000000000000000000000000000000000000000000e705",
+        "0x000000000000000000000000b56c929cd240e6255bd5fdc471507cf21ebd4e57",
+        "0x1d571384ac7a5020cb410d565afb77026d968c28c7725d2733456cbc45577bea",
+        "0xc89efdaa54c0f20c7adf612882df0950f5a951637e0307cdcb4c672f298b8bc6",
+        "0x41677265656d656e74456e67696e65000000000000000000000000000000000f",
+        "0x3100000000000000000000000000000000000000000000000000000000000001"
+      ],
+      "immutablesNameChainId": true,
+      "immutablesNameOwnAddress": true,
+      "creation": {
+        "transaction": "0x563b5a161fd3d97b119edfb7fc89724197cd5dfc5eec4b2af3a37746dc041cc9",
+        "block": 33727010,
+        "minedAt": "2026-11-20T23:59:27.000Z",
+        "from": "0x3793901C5eBB531F6CE5cE6E14a900BD3750591b",
+        "sentCodeMatchesBuild": true
+      }
+    },
+    {
+      "contract": "AgreementFactory",
+      "address": "0x21fa3A97d40c31E98352A06CdcD01687E2AA87c5",
+      "codeBytes": 7612,
+      "codeMatchesBuild": true,
+      "chainCodeHash": "0xff09beb9fd0b7cc7b659b9c2188afa8b32b2f5385c9e4d5c0a3e7fef43ced45e",
+      "comparedCodeHash": "0x68c20c509a9a7c03a16c39894ae66dccdc65d14039783d9e9096ff6abb0b0a7d",
+      "immutableBytesSetAside": 480,
+      "immutableValues": [
+        "0x46397f7a55038bfa4f6ea4bb100a638ece3809fa0cc67406fedf0a32695b1699",
+        "0x000000000000000000000000000000000000000000000000000000000000e705",
+        "0x00000000000000000000000021fa3a97d40c31e98352a06cdcd01687e2aa87c5",
+        "0xe14ac7b96cf60de65961195bd135eb8121a4c0ab478f7d1ca0faedfb80936287",
+        "0xc89efdaa54c0f20c7adf612882df0950f5a951637e0307cdcb4c672f298b8bc6",
+        "0x41677265656d656e74466163746f727900000000000000000000000000000010",
+        "0x3100000000000000000000000000000000000000000000000000000000000001",
+        "0x000000000000000000000000b56c929cd240e6255bd5fdc471507cf21ebd4e57"
+      ],
+      "immutablesNameChainId": true,
+      "immutablesNameOwnAddress": true,
+      "immutablesNameImplementation": true,
+      "creation": {
+        "transaction": "0x3c43c81053762d56b113767faa4da9229c7c47b40fb28947f4cab37abd38ef4b",
+        "block": 33727011,
+        "minedAt": "2026-11-20T23:59:31.000Z",
+        "from": "0x3793901C5eBB531F6CE5cE6E14a900BD3750591b",
+        "sentCodeMatchesBuild": true
+      }
+    }
+  ],
+  "factoryPointsAtRecordedImplementation": true,
+  "result": "match",
+  "failures": []
+}

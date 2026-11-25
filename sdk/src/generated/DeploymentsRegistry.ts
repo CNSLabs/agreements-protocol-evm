@@ -17,12 +17,21 @@ export const DeploymentsRegistry = {
       "deployer": "0x3793901C5eBB531F6CE5cE6E14a900BD3750591b"
     },
     "59141": {
-      "implementation": "0x1F0f9c889E6c762D8D5669c65a1A8fDFbEe38664",
-      "factory": "0x26Ff3AdEC23fC5778f190371B1CcCadDa74e26c8",
+      "implementation": "0xB56C929CD240e6255BD5fdc471507CF21ebd4E57",
+      "factory": "0x21fa3A97d40c31E98352A06CdcD01687E2AA87c5",
       "chainId": "59141",
       "network": "lineaSepolia",
-      "deployedAt": "2026-04-28T18:27:40.269Z",
-      "deployer": "0x2a6fFb5341F8C1cE123343162E3351F1B6286C43"
+      "deployedAt": "2026-11-20T23:59:33.927Z",
+      "deployer": "0x3793901C5eBB531F6CE5cE6E14a900BD3750591b",
+      "version": "1.1",
+      "legacy": {
+        "version": "1.0",
+        "implementation": "0x1F0f9c889E6c762D8D5669c65a1A8fDFbEe38664",
+        "factory": "0x26Ff3AdEC23fC5778f190371B1CcCadDa74e26c8",
+        "deployedAt": "2026-04-28T18:27:40.269Z",
+        "deployer": "0x2a6fFb5341F8C1cE123343162E3351F1B6286C43",
+        "deprecated": true
+      }
     },
     "59144": {
       "implementation": "0x9263A3a927939Aa76bE7bFa1850A1ef50454e122",
@@ -33,20 +42,38 @@ export const DeploymentsRegistry = {
       "deployer": "0x77Fb68De6B525122DDb70aD86889Cc028593f7C9"
     },
     "84532": {
-      "implementation": "0x1c2961AC5e2fBE47b3C0654d7dF543dB04F031A6",
-      "factory": "0x76dAA59C02d902e7063E6328D2E64ACee6CC121e",
+      "implementation": "0x2f11f5425C881E489e6aFEFb627D34177Bf530B0",
+      "factory": "0x85b1494393f4a8451736f4CfaABe1c4f02161a27",
       "chainId": "84532",
       "network": "baseSepolia",
-      "deployedAt": "2026-05-26T16:12:52.599Z",
-      "deployer": "0x3793901C5eBB531F6CE5cE6E14a900BD3750591b"
+      "deployedAt": "2026-11-24T21:24:12.802Z",
+      "deployer": "0x3793901C5eBB531F6CE5cE6E14a900BD3750591b",
+      "version": "1.1",
+      "legacy": {
+        "version": "1.0",
+        "implementation": "0x1c2961AC5e2fBE47b3C0654d7dF543dB04F031A6",
+        "factory": "0x76dAA59C02d902e7063E6328D2E64ACee6CC121e",
+        "deployedAt": "2026-05-26T16:12:52.599Z",
+        "deployer": "0x3793901C5eBB531F6CE5cE6E14a900BD3750591b",
+        "deprecated": true
+      }
     },
     "11155111": {
-      "implementation": "0x1c2961AC5e2fBE47b3C0654d7dF543dB04F031A6",
-      "factory": "0x76dAA59C02d902e7063E6328D2E64ACee6CC121e",
+      "implementation": "0x1D123e2164f0C83585483F706C510289CE8C7aA6",
+      "factory": "0x7087953E8fbe85673fEe93e5c137A53fEDb8282f",
       "chainId": "11155111",
       "network": "sepolia",
-      "deployedAt": "2026-05-26T14:28:37.794Z",
-      "deployer": "0x3793901C5eBB531F6CE5cE6E14a900BD3750591b"
+      "deployedAt": "2026-11-24T21:24:00.771Z",
+      "deployer": "0x3793901C5eBB531F6CE5cE6E14a900BD3750591b",
+      "version": "1.1",
+      "legacy": {
+        "version": "1.0",
+        "implementation": "0x1c2961AC5e2fBE47b3C0654d7dF543dB04F031A6",
+        "factory": "0x76dAA59C02d902e7063E6328D2E64ACee6CC121e",
+        "deployedAt": "2026-05-26T14:28:37.794Z",
+        "deployer": "0x3793901C5eBB531F6CE5cE6E14a900BD3750591b",
+        "deprecated": true
+      }
     }
   }
 } as const;

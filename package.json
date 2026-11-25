@@ -34,5 +34,13 @@
   },
   "devDependencies": {
     "husky": "^9.1.7"
+  },
+  "overrides": {
+    "cookie": "^0.7.2",
+    "tmp": "^0.2.6",
+    "serialize-javascript": "^7.0.5",
+    "@ethersproject/providers": {
+      "ws": "^8.21.0"
+    }
   }
 }

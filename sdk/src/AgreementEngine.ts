@@ -230,6 +230,10 @@ export class AgreementEngine {
 
   /**
    * Submit an input to progress the agreement's state machine
+   *
+   * An accepted input consumes the sender's permit nonce on this agreement, so
+   * an input permit the sender signed earlier and that was not submitted is no
+   * longer accepted. Permits signed by other parties are not affected.
    * 
    * @param agreement - The agreement JSON definition (for field type resolution)
    * @param inputId - The input identifier (e.g., "grantorData")
@@ -343,13 +347,24 @@ export class AgreementEngine {
 
   /**
    * Create an EIP-712 permit signature for submitting an input
+   *
+   * The permit names its signer (the wallet client's account) and carries the
+   * signer's current permit nonce on this agreement. It does not name a state:
+   * it stays usable until its deadline, in any state that accepts the input,
+   * until it or another permit of the same signer is accepted, the signer has
+   * an input accepted through `submitInput`, or the signer calls
+   * `cancelPermits`. Another party's input does not affect it, so several
+   * parties can sign up front and have their permits submitted in whatever
+   * order the agreement's transitions allow. Because each permit uses the
+   * signer's current nonce, one signer has one live permit per agreement at a
+   * time.
    * 
-   * @param signer - The signer that will create the signature (must be a Signer, not Provider)
+   * @param walletClient - viem WalletClient that signs the typed data (must be connected to an account)
    * @param agreement - The agreement JSON definition
    * @param inputId - The input identifier (e.g., "grantorData")
    * @param data - Plain object with field values
    * @param deadline - Unix timestamp when the permit expires
-   * @returns The signature components (v, r, s) and the signer address
+   * @returns The signature bytes and the signer address
    * 
    * @example
    * ```typescript
@@ -357,7 +372,7 @@ export class AgreementEngine {
    * const deadline = Math.floor(Date.now() / 1000) + 3600; // 1 hour from now
    * 
    * const { signature, signerAddress } = await agreement.createPermitSignature(
-   *   signer,
+   *   walletClient,
    *   agreementJson,
    *   "grantorData",
    *   { grantorName: "Alice" },
@@ -372,15 +387,16 @@ export class AgreementEngine {
     data: Record<string, unknown>,
     deadline: number
   ): Promise<{
-    signature: { v: number; r: string; s: string };
+    signature: Hex;
     signerAddress: Hex;
   }> {
-    // Get current nonce for the signer
     const account = walletClient.account;
     if (!account) {
       throw new Error("WalletClient must be connected to an account to sign typed data");
     }
     const signerAddress = account.address as Hex;
+
+    // The signer's permit nonce on this agreement
     const nonce = await this.getNonce(signerAddress);
 
     // Build the payload
@@ -390,7 +406,7 @@ export class AgreementEngine {
     // Get chain ID
     const chainId = await this.publicClient.getChainId();
 
-    // EIP-712 domain & types (kept structurally identical to previous ethers version)
+    // EIP-712 domain & types. Must match AgreementEngine.sol exactly (PERMIT_TYPEHASH).
     const domain = {
       name: "AgreementEngine",
       version: "1",
@@ -400,6 +416,7 @@ export class AgreementEngine {
 
     const types = {
       PermitInput: [
+        { name: "signer", type: "address" },
         { name: "inputId", type: "bytes32" },
         { name: "payload", type: "bytes" },
         { name: "nonce", type: "uint256" },
@@ -408,6 +425,7 @@ export class AgreementEngine {
     } as const;
 
     const message = {
+      signer: signerAddress,
       inputId: inputIdBytes32,
       payload: payload,
       nonce: nonce,
@@ -423,13 +441,8 @@ export class AgreementEngine {
       message,
     });
 
-    // Split signature into v, r, s
-    const r = `0x${signature.slice(2, 66)}`;
-    const s = `0x${signature.slice(66, 130)}`;
-    const v = parseInt(signature.slice(130, 132), 16);
-
     return {
-      signature: { v, r, s },
+      signature,
       signerAddress,
     };
   }
@@ -442,7 +455,7 @@ export class AgreementEngine {
    * @param inputId - The input identifier
    * @param data - Plain object with field values
    * @param deadline - Unix timestamp when the permit expires
-   * @param signature - The permit signature (v, r, s components)
+   * @param signature - The permit signature bytes (EOA signature, or bytes an ERC-1271 signer contract accepts)
    * @param waitForConfirmation - Whether to wait for transaction confirmation (default: false)
    * @returns Transaction hash, or receipt if waitForConfirmation is true
    * 
@@ -450,7 +463,7 @@ export class AgreementEngine {
    * ```typescript
    * // Signer creates permit off-chain
    * const { signature, signerAddress } = await agreement.createPermitSignature(
-   *   signer,
+   *   walletClient,
    *   agreementJson,
    *   "grantorData",
    *   { grantorName: "Alice" },
@@ -489,7 +502,7 @@ export class AgreementEngine {
     inputId: string,
     data: Record<string, unknown>,
     deadline: number,
-    signature: { v: number; r: string; s: string },
+    signature: Hex,
     waitForConfirmation: boolean = false
   ): Promise<Hash | TransactionReceipt> {
     return await withSdkSpan(
@@ -523,9 +536,7 @@ export class AgreementEngine {
             inputIdBytes32,
             payload,
             BigInt(deadline),
-            signature.v,
-            signature.r,
-            signature.s,
+            signature,
           ],
         };
 
@@ -538,6 +549,65 @@ export class AgreementEngine {
         );
 
         // Return hash if not waiting, full receipt if waiting
+        if (waitForConfirmation) {
+          return result as TransactionReceipt;
+        }
+        return result.transactionHash!;
+      },
+    );
+  }
+
+  /**
+   * Cancel the input permit the connected account has signed for this
+   * agreement and that has not been submitted yet
+   *
+   * Consumes the account's current permit nonce on this agreement, so any
+   * unsubmitted permit it signed with that nonce is no longer accepted. Other
+   * signers and other agreements are not affected. The transaction must be sent
+   * by the signer itself: there is no relayed form.
+   *
+   * @param waitForConfirmation - If true, waits for confirmation and returns the receipt
+   * @returns Transaction hash, or the receipt when waiting for confirmation
+   *
+   * @example
+   * ```typescript
+   * const agreement = new AgreementEngine("0x...", publicClient, walletClient);
+   * await agreement.cancelPermits(true);
+   * // Sign again with createPermitSignature: it reads the new nonce.
+   * ```
+   */
+  async cancelPermits(
+    waitForConfirmation: boolean = false
+  ): Promise<Hash | TransactionReceipt> {
+    return await withSdkSpan(
+      "agreement_engine.cancel_permits",
+      {
+        "blockchain.chain_id": this.publicClient.chain?.id,
+        "agreement.address": this.address,
+      },
+      async () => {
+        if (!this.walletClient) {
+          throw new Error(
+            "WalletClient required for cancelling permits. Pass a walletClient to the constructor."
+          );
+        }
+
+        const request: WriteContractParameters = {
+          chain: null,
+          account: this.walletClient.account!,
+          address: this.address,
+          abi: engineAbi,
+          functionName: 'cancelPermits',
+          args: [],
+        };
+
+        const result = await executeTransaction(
+          request,
+          this.publicClient,
+          this.walletClient,
+          waitForConfirmation
+        );
+
         if (waitForConfirmation) {
           return result as TransactionReceipt;
         }
