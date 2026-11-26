@@ -147,8 +147,9 @@ contract AgreementEngine is Initializable, ReentrancyGuardTransient, EIP712 {
     ///      takes two slots where the calldata form would take four.
     struct StoredInputDef {
         bytes32 id;
-        // One byte per field: its FieldType in the low three bits, then
-        // FIELD_REQUIRED and FIELD_PERSIST. The field ids are in `fieldIds`.
+        // One byte per field: its FieldType in the low five bits, then
+        // FIELD_REQUIRED and FIELD_PERSIST; the top bit is not used. The field
+        // ids are in `fieldIds`.
         bytes fieldFlags;
         mapping(uint256 => bytes32) fieldIds;
         bytes32[] verifierKeys;
@@ -157,9 +158,10 @@ contract AgreementEngine is Initializable, ReentrancyGuardTransient, EIP712 {
         mapping(uint256 => bytes) condLongArgs;
     }
 
-    uint8 private constant FIELD_TYPE_MASK = 0x07;
-    uint8 private constant FIELD_REQUIRED = 0x08;
-    uint8 private constant FIELD_PERSIST = 0x10;
+    // Room for 32 field types, where five exist, and for one more flag.
+    uint8 private constant FIELD_TYPE_MASK = 0x1f;
+    uint8 private constant FIELD_REQUIRED = 0x20;
+    uint8 private constant FIELD_PERSIST = 0x40;
 
     uint8 private constant OP_MASK = 0x3f;
     uint8 private constant ARG_KIND_MASK = 0xc0;
@@ -334,7 +336,7 @@ contract AgreementEngine is Initializable, ReentrancyGuardTransient, EIP712 {
     constructor() EIP712("AgreementEngine", "1") {
         // The Op of a condition is stored in six bits.
         assert(uint8(type(Op).max) <= OP_MASK);
-        // The FieldType of an input field is stored in three bits.
+        // The FieldType of an input field is stored in five bits.
         assert(uint8(type(FieldType).max) <= FIELD_TYPE_MASK);
         _disableInitializers();
     }
