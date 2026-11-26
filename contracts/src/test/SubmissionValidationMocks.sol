@@ -6,8 +6,14 @@ import "../AgreementEngine.sol";
 /// @dev Test-only observation surface; submission behavior is inherited unchanged.
 contract AgreementEngineStateHarness is AgreementEngine {
     function getStoredVar(bytes32 fieldId) external view returns (FieldType, bytes memory) {
-        StoredVar storage value = vars[fieldId];
-        return (value.fType, value.data);
+        // Reported as before the storage layout changed: the type and abi.encode(value).
+        StoredVar storage v = vars[fieldId];
+        if (v.tag == 0) return (FieldType.UINT256, "");
+        FieldType fType = FieldType(v.tag - 1);
+        if (fType == FieldType.ADDRESS) return (fType, abi.encode(v.addr));
+        if (fType == FieldType.BOOL) return (fType, abi.encode(v.addr != address(0)));
+        if (fType == FieldType.STRING) return (fType, abi.encode(string(v.str)));
+        return (fType, abi.encode(v.word));
     }
 }
 

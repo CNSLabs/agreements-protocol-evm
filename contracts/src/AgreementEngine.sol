@@ -95,9 +95,14 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
     // STRUCTS
     // ========================================================================
 
+    /// @dev A stored variable, kept in as few slots as its type needs: an
+    ///      address or a bool shares a slot with the tag, a uint256 or bytes32
+    ///      takes one more, and a string is kept as its bytes.
     struct StoredVar {
-        FieldType fType;
-        bytes data;     // abi.encode(value) of that type
+        uint8 tag;      // 0 = not set, otherwise FieldType + 1
+        address addr;   // ADDRESS value; address(1) for BOOL true
+        bytes32 word;   // UINT256 or BYTES32 value
+        bytes str;      // STRING value
     }
 
     struct DataField {
@@ -590,11 +595,7 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
             // Validate the field can be decoded as the claimed type
             _validateFieldDecoding(iv.data, iv.fType);
 
-            // Store in vars mapping
-            vars[iv.id] = StoredVar({
-                fType: iv.fType,
-                data: iv.data
-            });
+            _writeVar(iv.id, iv.fType, iv.data);
         }
     }
 
@@ -641,15 +642,41 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
                     require(f.fType == fd.fType, "Persist field type mismatch");
 
                     // Store/overwrite current value
-                    StoredVar storage v = vars[fd.fieldId];
-                    v.fType = f.fType;
-                    v.data = f.data;
+                    _writeVar(fd.fieldId, f.fType, f.data);
 
                     found = true;
                     break;
                 }
             }
             // If persist = true, we already enforced `required = true` in _validateFields
+        }
+    }
+
+    /**
+     * @notice Store a value under `id`. `data` is abi.encode(value) and has
+     *         already been checked to decode as `fType`.
+     */
+    function _writeVar(bytes32 id, FieldType fType, bytes memory data) internal {
+        StoredVar storage v = vars[id];
+        v.tag = uint8(fType) + 1;
+        if (fType == FieldType.ADDRESS) {
+            v.addr = abi.decode(data, (address));
+        } else if (fType == FieldType.BOOL) {
+            v.addr = abi.decode(data, (bool)) ? address(1) : address(0);
+        } else if (fType == FieldType.STRING) {
+            v.str = bytes(abi.decode(data, (string)));
+        } else {
+            v.word = abi.decode(data, (bytes32));
+        }
+    }
+
+    /// @dev The stored variable `id`, which must be set and of type `expected`.
+    function _readVar(bytes32 id, FieldType expected) internal view returns (StoredVar storage v) {
+        v = vars[id];
+        uint8 tag = v.tag;
+        if (tag == 0) revert VarNotSet(id);
+        if (tag != uint8(expected) + 1) {
+            revert TypeMismatch(_fieldTypeToString(expected), _fieldTypeToString(FieldType(tag - 1)));
         }
     }
 
@@ -840,42 +867,21 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
      * @notice Get a uint256 value from stored vars.
      */
     function _getUintFromStored(bytes32 targetFieldId) internal view returns (uint256 value) {
-        StoredVar storage v = vars[targetFieldId];
-        if (v.data.length == 0) {
-            revert VarNotSet(targetFieldId);
-        }
-        if (v.fType != FieldType.UINT256) {
-            revert TypeMismatch("UINT256", _fieldTypeToString(v.fType));
-        }
-        return abi.decode(v.data, (uint256));
+        return uint256(_readVar(targetFieldId, FieldType.UINT256).word);
     }
 
     /**
      * @notice Get an address value from stored vars.
      */
     function _getAddressFromStored(bytes32 targetFieldId) internal view returns (address value) {
-        StoredVar storage v = vars[targetFieldId];
-        if (v.data.length == 0) {
-            revert VarNotSet(targetFieldId);
-        }
-        if (v.fType != FieldType.ADDRESS) {
-            revert TypeMismatch("ADDRESS", _fieldTypeToString(v.fType));
-        }
-        return abi.decode(v.data, (address));
+        return _readVar(targetFieldId, FieldType.ADDRESS).addr;
     }
 
     /**
      * @notice Get a string value from stored vars.
      */
     function _getStringFromStored(bytes32 targetFieldId) internal view returns (string memory value) {
-        StoredVar storage v = vars[targetFieldId];
-        if (v.data.length == 0) {
-            revert VarNotSet(targetFieldId);
-        }
-        if (v.fType != FieldType.STRING) {
-            revert TypeMismatch("STRING", _fieldTypeToString(v.fType));
-        }
-        return abi.decode(v.data, (string));
+        return string(_readVar(targetFieldId, FieldType.STRING).str);
     }
 
     /**
@@ -883,15 +889,7 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
      * @param permitSigner If non-zero, checks this address instead of msg.sender (for permit submissions)
      */
     function _evalSenderCondition(Condition memory c, address permitSigner) internal view {
-        StoredVar storage v = vars[c.fieldId];
-        if (v.data.length == 0) {
-            revert VarNotSet(c.fieldId);
-        }
-        if (v.fType != FieldType.ADDRESS) {
-            revert TypeMismatch("ADDRESS", _fieldTypeToString(v.fType));
-        }
-
-        address stored = abi.decode(v.data, (address));
+        address stored = _getAddressFromStored(c.fieldId);
         address senderToCheck = permitSigner != address(0) ? permitSigner : msg.sender;
         if (senderToCheck != stored) {
             revert SenderAddressMismatch(senderToCheck, stored);
