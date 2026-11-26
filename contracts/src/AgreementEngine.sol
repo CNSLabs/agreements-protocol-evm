@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/proxy/utils/Initializable.sol";
-import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 import "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import "@openzeppelin/contracts/utils/cryptography/SignatureChecker.sol";
 
@@ -37,7 +37,7 @@ interface IInputVerifier {
  * @dev Each clone instance represents one agreement. The implementation contract
  *      has initializers disabled and cannot be used directly.
  */
-contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
+contract AgreementEngine is Initializable, ReentrancyGuardTransient, EIP712 {
     // ========================================================================
     // TYPES & ENUMS
     // ========================================================================
@@ -95,9 +95,14 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
     // STRUCTS
     // ========================================================================
 
+    /// @dev A stored variable, kept in as few slots as its type needs: an
+    ///      address or a bool shares a slot with the tag, a uint256 or bytes32
+    ///      takes one more, and a string is kept as its bytes.
     struct StoredVar {
-        FieldType fType;
-        bytes data;     // abi.encode(value) of that type
+        uint8 tag;      // 0 = not set, otherwise FieldType + 1
+        address addr;   // ADDRESS value; address(1) for BOOL true
+        bytes32 word;   // UINT256 or BYTES32 value
+        bytes str;      // STRING value
     }
 
     struct DataField {
@@ -127,6 +132,44 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
         bytes32[] verifierKeys;
     }
 
+    /// @dev A condition as kept in storage: the field it checks and its
+    ///      argument, when the argument is one or two words. Its operation is a
+    ///      byte of the input's `condOps`.
+    struct StoredCondition {
+        bytes32 fieldId;
+        bytes32 arg;
+        bytes32 arg2;
+    }
+
+    /// @dev An input definition as kept in storage. `condOps` holds one byte per
+    ///      condition: the Op in the low six bits and, in the top two, where the
+    ///      argument is (ARG_* below). Most arguments are one word, so a condition
+    ///      takes two slots where the calldata form would take four.
+    struct StoredInputDef {
+        bytes32 id;
+        // One byte per field: its FieldType in the low five bits, then
+        // FIELD_REQUIRED and FIELD_PERSIST; the top bit is not used. The field
+        // ids are in `fieldIds`.
+        bytes fieldFlags;
+        mapping(uint256 => bytes32) fieldIds;
+        bytes32[] verifierKeys;
+        bytes condOps;
+        mapping(uint256 => StoredCondition) conds;
+        mapping(uint256 => bytes) condLongArgs;
+    }
+
+    // Room for 32 field types, where five exist, and for one more flag.
+    uint8 private constant FIELD_TYPE_MASK = 0x1f;
+    uint8 private constant FIELD_REQUIRED = 0x20;
+    uint8 private constant FIELD_PERSIST = 0x40;
+
+    uint8 private constant OP_MASK = 0x3f;
+    uint8 private constant ARG_KIND_MASK = 0xc0;
+    uint8 private constant ARG_ONE_WORD = 0x00;   // `arg`
+    uint8 private constant ARG_TWO_WORDS = 0x40;  // `arg` then `arg2`
+    uint8 private constant ARG_BYTES = 0x80;      // `condLongArgs`
+    uint8 private constant ARG_EMPTY = 0xc0;      // no argument
+
     struct VerifierInit {
         bytes32 key;
         address verifier;
@@ -148,9 +191,8 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
      */
     struct Action {
         address target;
-        uint256 value;
+        bool exists;   // shares the slot of `target`
         bytes data;
-        bool exists;
     }
 
     /**
@@ -175,10 +217,20 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
     bytes32 public initialState;
     bytes32 public currentState;
     address public owner;
+    // Whether any action or any verifier was registered. They share the slot of
+    // `owner`, which every submission reads first, so an agreement without
+    // actions or verifiers does not pay to look for them.
+    bool internal hasActions;
+    bool internal hasVerifiers;
 
     // Single-agreement storage (no agreementId keys)
-    mapping(bytes32 => InputDef) internal inputDefs;
-    Transition[] internal transitions;
+    mapping(bytes32 => StoredInputDef) internal inputDefs;
+    // Transitions, looked up by (fromState, inputId). The first transition
+    // registered for a pair is the one that applies, as when they were a list
+    // searched in order. A target state of zero cannot be told from an empty
+    // slot, so that rare case is recorded in `transitionToZero`.
+    mapping(bytes32 => mapping(bytes32 => bytes32)) internal transitionTo;
+    mapping(bytes32 => mapping(bytes32 => bool)) internal transitionToZero;
     mapping(bytes32 => address) public verifierRegistry;
     mapping(bytes32 => StoredVar) internal vars;
 
@@ -282,6 +334,10 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() EIP712("AgreementEngine", "1") {
+        // The Op of a condition is stored in six bits.
+        assert(uint8(type(Op).max) <= OP_MASK);
+        // The FieldType of an input field is stored in five bits.
+        assert(uint8(type(FieldType).max) <= FIELD_TYPE_MASK);
         _disableInitializers();
     }
 
@@ -355,7 +411,7 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
     ) external nonReentrant {
         if (owner == address(0)) revert NotInitialized();
 
-        InputDef storage def = inputDefs[inputId];
+        StoredInputDef storage def = inputDefs[inputId];
         require(def.id != 0, "Unknown inputId");
 
         // 1. Decode DataField[]
@@ -444,7 +500,7 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
         nonces[signer]++;
         
         // Now process the input as if signer submitted it
-        InputDef storage def = inputDefs[inputId];
+        StoredInputDef storage def = inputDefs[inputId];
         require(def.id != 0, "Unknown inputId");
         
         // Decode DataField[]
@@ -512,6 +568,7 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
      * @dev Called during initialization; verifiers are optional (pass empty array).
      */
     function _storeVerifiers(VerifierInit[] calldata verifiers_) internal {
+        if (verifiers_.length != 0) hasVerifiers = true;
         for (uint256 i = 0; i < verifiers_.length; i++) {
             VerifierInit calldata verifierInit = verifiers_[i];
             if (verifierInit.verifier == address(0)) revert VerifierZero();
@@ -531,21 +588,31 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
             InputDef calldata src = defs[i];
             require(src.id != bytes32(0), "InputDef id zero");
 
-            InputDef storage dst = inputDefs[src.id];
+            StoredInputDef storage dst = inputDefs[src.id];
             require(dst.id == bytes32(0), "Duplicate inputId");
-            dst.id = src.id;
+            // Written through the mapping, not through `dst`, so that static
+            // analysis sees `inputDefs` being assigned.
+            inputDefs[src.id].id = src.id;
 
-            // Deep copy fields array
-            for (uint256 j = 0; j < src.fields.length; j++) {
-                // A condition on this id reads the block time, never a submitted field.
-                if (src.fields[j].fieldId == BLOCK_TIME_FIELD) revert ReservedFieldId(BLOCK_TIME_FIELD);
-                dst.fields.push(src.fields[j]);
+            // Copy the fields in their packed form
+            uint256 fieldCount = src.fields.length;
+            if (fieldCount != 0) {
+                bytes memory flags = new bytes(fieldCount);
+                for (uint256 j = 0; j < fieldCount; j++) {
+                    InputFieldDef calldata field = src.fields[j];
+                    // A condition on this id reads the block time, never a submitted field.
+                    if (field.fieldId == BLOCK_TIME_FIELD) revert ReservedFieldId(BLOCK_TIME_FIELD);
+                    dst.fieldIds[j] = field.fieldId;
+                    flags[j] = bytes1(
+                        uint8(field.fType) |
+                        (field.required ? FIELD_REQUIRED : 0) |
+                        (field.persist ? FIELD_PERSIST : 0)
+                    );
+                }
+                dst.fieldFlags = flags;
             }
 
-            // Deep copy conditions array
-            for (uint256 k = 0; k < src.conditions.length; k++) {
-                dst.conditions.push(src.conditions[k]);
-            }
+            _storeConditions(dst, src.conditions);
 
             // Deep copy verifierKeys array
             for (uint256 m = 0; m < src.verifierKeys.length; m++) {
@@ -557,11 +624,74 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
     }
 
     /**
+     * @notice Store an input's conditions in their packed form.
+     */
+    function _storeConditions(StoredInputDef storage dst, Condition[] calldata conditions) internal {
+        uint256 count = conditions.length;
+        if (count == 0) return;
+
+        bytes memory ops = new bytes(count);
+        for (uint256 k = 0; k < count; k++) {
+            Condition calldata c = conditions[k];
+            StoredCondition storage sc = dst.conds[k];
+            sc.fieldId = c.fieldId;
+
+            uint256 argLength = c.bytesArg.length;
+            uint8 kind;
+            if (argLength == 32) {
+                sc.arg = bytes32(c.bytesArg);
+                kind = ARG_ONE_WORD;
+            } else if (argLength == 64) {
+                sc.arg = bytes32(c.bytesArg[:32]);
+                sc.arg2 = bytes32(c.bytesArg[32:]);
+                kind = ARG_TWO_WORDS;
+            } else if (argLength == 0) {
+                kind = ARG_EMPTY;
+            } else {
+                dst.condLongArgs[k] = c.bytesArg;
+                kind = ARG_BYTES;
+            }
+            ops[k] = bytes1(uint8(c.op) | kind);
+        }
+        dst.condOps = ops;
+    }
+
+    /**
+     * @notice Read condition `index` of an input back into the form it was given in.
+     */
+    function _loadCondition(
+        StoredInputDef storage def,
+        uint256 index,
+        uint8 packedOp
+    ) internal view returns (Condition memory c) {
+        StoredCondition storage sc = def.conds[index];
+        c.op = Op(packedOp & OP_MASK);
+        c.fieldId = sc.fieldId;
+
+        uint8 kind = packedOp & ARG_KIND_MASK;
+        if (kind == ARG_ONE_WORD) {
+            c.bytesArg = abi.encode(sc.arg);
+        } else if (kind == ARG_TWO_WORDS) {
+            c.bytesArg = abi.encode(sc.arg, sc.arg2);
+        } else if (kind == ARG_BYTES) {
+            c.bytesArg = def.condLongArgs[index];
+        }
+    }
+
+    /**
      * @notice Store transitions in contract storage.
      */
     function _storeTransitions(Transition[] calldata trans) internal {
         for (uint256 i = 0; i < trans.length; i++) {
-            transitions.push(trans[i]);
+            Transition calldata t = trans[i];
+            if (transitionTo[t.fromState][t.inputId] != bytes32(0) || transitionToZero[t.fromState][t.inputId]) {
+                continue; // an earlier transition for this pair takes precedence
+            }
+            if (t.toState == bytes32(0)) {
+                transitionToZero[t.fromState][t.inputId] = true;
+            } else {
+                transitionTo[t.fromState][t.inputId] = t.toState;
+            }
         }
     }
 
@@ -577,11 +707,7 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
             // Validate the field can be decoded as the claimed type
             _validateFieldDecoding(iv.data, iv.fType);
 
-            // Store in vars mapping
-            vars[iv.id] = StoredVar({
-                fType: iv.fType,
-                data: iv.data
-            });
+            _writeVar(iv.id, iv.fType, iv.data);
         }
     }
 
@@ -590,6 +716,7 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
      * @dev Called during initialization; actions are optional (pass empty array).
      */
     function _storeActions(ActionInit[] calldata actions_) internal {
+        if (actions_.length != 0) hasActions = true;
         for (uint256 i = 0; i < actions_.length; i++) {
             ActionInit calldata a = actions_[i];
             if (a.target == address(0)) revert ActionTargetZero();
@@ -598,9 +725,8 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
             if (a.value != 0) revert ActionValueNotSupported(a.fromState, a.inputId, a.value);
             actions[a.fromState][a.inputId] = Action({
                 target: a.target,
-                value: a.value,
-                data: a.data,
-                exists: true
+                exists: true,
+                data: a.data
             });
             emit ActionRegistered(a.fromState, a.inputId, a.target, a.value, a.data);
         }
@@ -611,32 +737,74 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
     // ========================================================================
 
     function _persistFields(
-        InputDef storage def,
+        StoredInputDef storage def,
         DataField[] memory fields
     ) internal {
-        for (uint256 i = 0; i < def.fields.length; i++) {
-            InputFieldDef storage fd = def.fields[i];
-            if (!fd.persist) continue;
+        bytes memory flags = def.fieldFlags;
+        for (uint256 i = 0; i < flags.length; i++) {
+            uint8 flag = uint8(flags[i]);
+            if (flag & FIELD_PERSIST == 0) continue;
+            bytes32 fieldId = def.fieldIds[i];
 
             // Find the matching field in this input instance
-            bool found = false;
             for (uint256 j = 0; j < fields.length; j++) {
-                if (fields[j].id == fd.fieldId) {
+                if (fields[j].id == fieldId) {
                     DataField memory f = fields[j];
 
                     // Type sanity check
-                    require(f.fType == fd.fType, "Persist field type mismatch");
+                    require(uint8(f.fType) == flag & FIELD_TYPE_MASK, "Persist field type mismatch");
 
                     // Store/overwrite current value
-                    StoredVar storage v = vars[fd.fieldId];
-                    v.fType = f.fType;
-                    v.data = f.data;
-
-                    found = true;
+                    _writeVar(fieldId, f.fType, f.data);
                     break;
                 }
             }
-            // If persist = true, we already enforced `required = true` in _validateFields
+        }
+    }
+
+    /**
+     * @notice Store a value under `id`. `data` is abi.encode(value) and has
+     *         already been checked to decode as `fType`.
+     */
+    function _writeVar(bytes32 id, FieldType fType, bytes memory data) internal {
+        StoredVar storage v = vars[id];
+        uint8 newTag = uint8(fType) + 1;
+        uint8 oldTag = v.tag;
+        if (oldTag != 0 && oldTag != newTag) {
+            // The variable changes type. What it held under the old type is
+            // removed now, by the input that replaces it, so that only the
+            // member of the current type is ever set and no later writer is
+            // left to clear a long string it did not store.
+            FieldType oldType = FieldType(oldTag - 1);
+            if (oldType == FieldType.STRING) {
+                delete v.str;
+            } else if (oldType == FieldType.UINT256 || oldType == FieldType.BYTES32) {
+                v.word = bytes32(0);
+            } else {
+                v.addr = address(0);
+            }
+        }
+        // Written through the mapping, not through `v`, so that static
+        // analysis sees `vars` being assigned.
+        vars[id].tag = newTag;
+        if (fType == FieldType.ADDRESS) {
+            v.addr = abi.decode(data, (address));
+        } else if (fType == FieldType.BOOL) {
+            v.addr = abi.decode(data, (bool)) ? address(1) : address(0);
+        } else if (fType == FieldType.STRING) {
+            v.str = bytes(abi.decode(data, (string)));
+        } else {
+            v.word = abi.decode(data, (bytes32));
+        }
+    }
+
+    /// @dev The stored variable `id`, which must be set and of type `expected`.
+    function _readVar(bytes32 id, FieldType expected) internal view returns (StoredVar storage v) {
+        v = vars[id];
+        uint8 tag = v.tag;
+        if (tag == 0) revert VarNotSet(id);
+        if (tag != uint8(expected) + 1) {
+            revert TypeMismatch(_fieldTypeToString(expected), _fieldTypeToString(FieldType(tag - 1)));
         }
     }
 
@@ -650,12 +818,15 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
      *      count is small, and this is a view function so reentrancy is not a concern.
      */
     function _runVerifiers(
-        InputDef storage def,
+        StoredInputDef storage def,
         bytes32 inputId,
         bytes calldata payload,
         address effectiveSender
     ) internal view {
-        for (uint256 i = 0; i < def.verifierKeys.length; i++) {
+        // An input can only name a verifier that was registered at creation.
+        if (!hasVerifiers) return;
+        uint256 count = def.verifierKeys.length;
+        for (uint256 i = 0; i < count; i++) {
             bytes32 key = def.verifierKeys[i];
             address verifier = verifierRegistry[key];
             require(verifier != address(0), "Verifier not registered");
@@ -678,23 +849,26 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
      * @notice Validate that fields match the input definition structure.
      */
     function _validateFields(
-        InputDef storage def,
+        StoredInputDef storage def,
         DataField[] memory fields
     ) internal view {
-        for (uint256 i = 0; i < def.fields.length; i++) {
-            InputFieldDef storage fd = def.fields[i];
+        bytes memory flags = def.fieldFlags;
+        for (uint256 i = 0; i < flags.length; i++) {
+            uint8 flag = uint8(flags[i]);
+            bytes32 fieldId = def.fieldIds[i];
+            FieldType fType = FieldType(flag & FIELD_TYPE_MASK);
             bool found = false;
 
             for (uint256 j = 0; j < fields.length; j++) {
-                if (fields[j].id == fd.fieldId) {
+                if (fields[j].id == fieldId) {
                     found = true;
-                    require(fields[j].fType == fd.fType, "Field type mismatch");
-                    _validateFieldDecoding(fields[j].data, fd.fType);
+                    require(fields[j].fType == fType, "Field type mismatch");
+                    _validateFieldDecoding(fields[j].data, fType);
                     break;
                 }
             }
 
-            if (fd.required) {
+            if (flag & FIELD_REQUIRED != 0) {
                 require(found, "Required field missing");
             }
         }
@@ -733,12 +907,13 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
      * @param permitSigner If non-zero, SENDER_EQ_VAR_ADDRESS conditions check this address instead of msg.sender
      */
     function _validateConditions(
-        InputDef storage def,
+        StoredInputDef storage def,
         DataField[] memory fields,
         address permitSigner
     ) internal view {
-        for (uint256 i = 0; i < def.conditions.length; i++) {
-            Condition memory c = def.conditions[i];
+        bytes memory ops = def.condOps;
+        for (uint256 i = 0; i < ops.length; i++) {
+            Condition memory c = _loadCondition(def, i, uint8(ops[i]));
             if (c.op == Op.SENDER_EQ_VAR_ADDRESS) {
                 _evalSenderCondition(c, permitSigner);
                 continue;
@@ -814,10 +989,11 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
     /**
      * @notice Check whether an input field is declared and optional.
      */
-    function _isOptionalField(InputDef storage def, bytes32 fieldId) internal view returns (bool) {
-        for (uint256 i = 0; i < def.fields.length; i++) {
-            if (def.fields[i].fieldId == fieldId) {
-                return !def.fields[i].required;
+    function _isOptionalField(StoredInputDef storage def, bytes32 fieldId) internal view returns (bool) {
+        bytes memory flags = def.fieldFlags;
+        for (uint256 i = 0; i < flags.length; i++) {
+            if (def.fieldIds[i] == fieldId) {
+                return uint8(flags[i]) & FIELD_REQUIRED == 0;
             }
         }
         return false;
@@ -827,42 +1003,21 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
      * @notice Get a uint256 value from stored vars.
      */
     function _getUintFromStored(bytes32 targetFieldId) internal view returns (uint256 value) {
-        StoredVar storage v = vars[targetFieldId];
-        if (v.data.length == 0) {
-            revert VarNotSet(targetFieldId);
-        }
-        if (v.fType != FieldType.UINT256) {
-            revert TypeMismatch("UINT256", _fieldTypeToString(v.fType));
-        }
-        return abi.decode(v.data, (uint256));
+        return uint256(_readVar(targetFieldId, FieldType.UINT256).word);
     }
 
     /**
      * @notice Get an address value from stored vars.
      */
     function _getAddressFromStored(bytes32 targetFieldId) internal view returns (address value) {
-        StoredVar storage v = vars[targetFieldId];
-        if (v.data.length == 0) {
-            revert VarNotSet(targetFieldId);
-        }
-        if (v.fType != FieldType.ADDRESS) {
-            revert TypeMismatch("ADDRESS", _fieldTypeToString(v.fType));
-        }
-        return abi.decode(v.data, (address));
+        return _readVar(targetFieldId, FieldType.ADDRESS).addr;
     }
 
     /**
      * @notice Get a string value from stored vars.
      */
     function _getStringFromStored(bytes32 targetFieldId) internal view returns (string memory value) {
-        StoredVar storage v = vars[targetFieldId];
-        if (v.data.length == 0) {
-            revert VarNotSet(targetFieldId);
-        }
-        if (v.fType != FieldType.STRING) {
-            revert TypeMismatch("STRING", _fieldTypeToString(v.fType));
-        }
-        return abi.decode(v.data, (string));
+        return string(_readVar(targetFieldId, FieldType.STRING).str);
     }
 
     /**
@@ -870,15 +1025,7 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
      * @param permitSigner If non-zero, checks this address instead of msg.sender (for permit submissions)
      */
     function _evalSenderCondition(Condition memory c, address permitSigner) internal view {
-        StoredVar storage v = vars[c.fieldId];
-        if (v.data.length == 0) {
-            revert VarNotSet(c.fieldId);
-        }
-        if (v.fType != FieldType.ADDRESS) {
-            revert TypeMismatch("ADDRESS", _fieldTypeToString(v.fType));
-        }
-
-        address stored = abi.decode(v.data, (address));
+        address stored = _getAddressFromStored(c.fieldId);
         address senderToCheck = permitSigner != address(0) ? permitSigner : msg.sender;
         if (senderToCheck != stored) {
             revert SenderAddressMismatch(senderToCheck, stored);
@@ -1139,14 +1286,9 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
         bytes32 fromState,
         bytes32 inputId
     ) internal view returns (bool, bytes32) {
-        uint256 len = transitions.length;
-        for (uint256 i = 0; i < len; i++) {
-            Transition memory t = transitions[i];
-            if (t.fromState == fromState && t.inputId == inputId) {
-                return (true, t.toState);
-            }
-        }
-        return (false, bytes32(0));
+        bytes32 toState = transitionTo[fromState][inputId];
+        if (toState != bytes32(0)) return (true, toState);
+        return (transitionToZero[fromState][inputId], bytes32(0));
     }
 
     /**
@@ -1154,6 +1296,7 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
      * Reverts on failure to preserve atomicity.
      */
     function _executeActionIfAny(bytes32 fromState, bytes32 toState, bytes32 inputId) internal {
+        if (!hasActions) return;
         Action storage a = actions[fromState][inputId];
         if (!a.exists) return;
 
