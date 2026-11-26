@@ -166,6 +166,11 @@ type Rng = ReturnType<typeof rng>;
               : { op: 15, fieldId: field.fieldId, bytesArg: coder.encode(["bytes32"], [A]) });
           }
         }
+        if (r.chance(0.05)) {
+          // More than 31 conditions, all of which hold, ahead of the ones that may not: the
+          // byte kept per condition leaves its one slot, and the later indexes still decide.
+          for (let k = 0; k < 32 + r.int(8); k++) conditions.unshift({ op: 5, fieldId: BLOCK_TIME_FIELD, bytesArg: coder.encode(["uint256"], [1000 + k]) });
+        }
         if (r.chance(0.3)) {
           // The block time against a moment long past, far ahead, or the stored number.
           conditions.push(r.pick([
@@ -300,12 +305,23 @@ type Rng = ReturnType<typeof rng>;
     };
 
     // ---- comparing ---------------------------------------------------------
+    // The revert data of a refused call, as hex. A refusal that carries none in a recognisable
+    // place is reported by its message and counted, so that two such refusals are never taken
+    // to be equal without anyone seeing that it happened.
+    let refusalsWithoutData = 0;
+    const revertDataOf = (error: any): string => {
+      for (const candidate of [error?.data, error?.info?.error?.data, error?.info?.error?.data?.data, error?.error?.data]) {
+        if (typeof candidate === "string" && /^0x[0-9a-fA-F]*$/.test(candidate)) return candidate;
+      }
+      refusalsWithoutData++;
+      return `no revert data: ${String(error?.shortMessage ?? error?.message).slice(0, 160)}`;
+    };
     const outcome = async (from: any, to: string, data: string) => {
       try {
         await ethers.provider.call({ from: from.address, to, data });
         return { ok: true as const };
       } catch (error: any) {
-        return { ok: false as const, revert: String(error.data ?? error.info?.error?.data ?? error.message) };
+        return { ok: false as const, revert: revertDataOf(error) };
       }
     };
     const normalizeLogs = (receipt: any, self: string, other: string) =>
@@ -324,6 +340,7 @@ type Rng = ReturnType<typeof rng>;
     };
     const { chainId } = await ethers.provider.getNetwork();
 
+    let acceptedWithManyConditions = 0;
     let created = 0, refusedAtCreation = 0, accepted = 0, refused = 0, actionsRun = 0, viaPermit = 0, manyFieldInputs = 0, reentrantActionsRun = 0;
     const actionTopic = engineAbi.getEvent("ActionExecuted")!.topicHash;
     const acceptedTopic = engineAbi.getEvent("InputAccepted")!.topicHash;
@@ -352,8 +369,7 @@ type Rng = ReturnType<typeof rng>;
       };
       const ref = await deployedAt(refFactory);
       const cur = await deployedAt(newFactory);
-      expect(normalizeLogs(cur.receipt, cur.address, ref.address).filter((l: any) => l.own !== undefined).map((l: any) => ({ topics: l.topics.slice(0, 1), data: l.data.length })), `${where}: creation events`)
-        .to.deep.equal(normalizeLogs(ref.receipt, ref.address, cur.address).map((l: any) => ({ topics: l.topics.slice(0, 1), data: l.data.length })));
+      expect(normalizeLogs(cur.receipt, cur.address, ref.address), `${where}: creation events`).to.deep.equal(normalizeLogs(ref.receipt, ref.address, cur.address));
       const refEngine: any = new ethers.Contract(ref.address, engineAbi, deployer);
       const curEngine: any = new ethers.Contract(cur.address, engineAbi, deployer);
 
@@ -376,10 +392,12 @@ type Rng = ReturnType<typeof rng>;
         const kind = r.next();
 
         let build: (engineAddress: string, engine: any) => Promise<{ from: any; data: string }>;
+        let submittedTo: { conditions: unknown[] } | undefined;
         if (kind < 0.04) {
           build = async () => ({ from: actor, data: engineAbi.encodeFunctionData("cancelPermits") });
         } else {
-          const def: { id: string; fields: { fieldId: string; fType: number }[] } | undefined = r.chance(0.92) ? r.pick(g.inputDefs) : undefined;
+          const def: { id: string; fields: { fieldId: string; fType: number }[]; conditions: unknown[] } | undefined = r.chance(0.92) ? r.pick(g.inputDefs) : undefined;
+          submittedTo = def;
           const inputId = def ? def.id : r.pick(INPUT_IDS);
           const payload = payloadFor(r, def, Boolean(g.coherent));
           if (kind < 0.5) {
@@ -422,6 +440,7 @@ type Rng = ReturnType<typeof rng>;
         const refReceipt = await (await refCall.from.sendTransaction({ to: ref.address, data: refCall.data })).wait();
         const curReceipt = await (await curCall.from.sendTransaction({ to: cur.address, data: curCall.data })).wait();
         expect(normalizeLogs(curReceipt, cur.address, ref.address), `${at}: events`).to.deep.equal(normalizeLogs(refReceipt, ref.address, cur.address));
+        if ((submittedTo?.conditions.length ?? 0) > 31) acceptedWithManyConditions++;
         const ranAction = refReceipt.logs.find((l: any) => l.topics[0] === actionTopic);
         if (ranAction) actionsRun++;
         if (ranAction && reentrantTargets.some((target) => ranAction.data.toLowerCase().includes(target.slice(2).toLowerCase()))) reentrantActionsRun++;
@@ -431,7 +450,7 @@ type Rng = ReturnType<typeof rng>;
       }
     }
 
-    console.log(`      agreements created: ${created}, refused at creation: ${refusedAtCreation}; submissions accepted: ${accepted} (${viaPermit} by permit, ${actionsRun} ran an action, ${reentrantActionsRun} of those a target that calls back, ${manyFieldInputs} with a very long payload), refused: ${refused}`);
+    console.log(`      agreements created: ${created}, refused at creation: ${refusedAtCreation}; submissions accepted: ${accepted} (${viaPermit} by permit, ${actionsRun} ran an action, ${reentrantActionsRun} of those a target that calls back, ${manyFieldInputs} with a very long payload, ${acceptedWithManyConditions} on an input with more than 31 conditions), refused: ${refused} (${refusalsWithoutData} without revert data in a recognised place)`);
     console.log(`      distinct refusal selectors seen: ${refusalKinds.size} (${[...refusalKinds.entries()].sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} x${v}`).join(", ")})`);
     expect(created, "some agreements must be created for the comparison to mean anything").to.be.greaterThan(SEEDS / 10);
     expect(accepted, "some submissions must be accepted for the comparison to mean anything").to.be.greaterThan(0);
