@@ -132,6 +132,35 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
         bytes32[] verifierKeys;
     }
 
+    /// @dev A condition as kept in storage: the field it checks and its
+    ///      argument, when the argument is one or two words. Its operation is a
+    ///      byte of the input's `condOps`.
+    struct StoredCondition {
+        bytes32 fieldId;
+        bytes32 arg;
+        bytes32 arg2;
+    }
+
+    /// @dev An input definition as kept in storage. `condOps` holds one byte per
+    ///      condition: the Op in the low six bits and, in the top two, where the
+    ///      argument is (ARG_* below). Most arguments are one word, so a condition
+    ///      takes two slots where the calldata form would take four.
+    struct StoredInputDef {
+        bytes32 id;
+        InputFieldDef[] fields;
+        bytes32[] verifierKeys;
+        bytes condOps;
+        mapping(uint256 => StoredCondition) conds;
+        mapping(uint256 => bytes) condLongArgs;
+    }
+
+    uint8 private constant OP_MASK = 0x3f;
+    uint8 private constant ARG_KIND_MASK = 0xc0;
+    uint8 private constant ARG_ONE_WORD = 0x00;   // `arg`
+    uint8 private constant ARG_TWO_WORDS = 0x40;  // `arg` then `arg2`
+    uint8 private constant ARG_BYTES = 0x80;      // `condLongArgs`
+    uint8 private constant ARG_EMPTY = 0xc0;      // no argument
+
     struct VerifierInit {
         bytes32 key;
         address verifier;
@@ -182,7 +211,7 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
     address public owner;
 
     // Single-agreement storage (no agreementId keys)
-    mapping(bytes32 => InputDef) internal inputDefs;
+    mapping(bytes32 => StoredInputDef) internal inputDefs;
     // Transitions, looked up by (fromState, inputId). The first transition
     // registered for a pair is the one that applies, as when they were a list
     // searched in order. A target state of zero cannot be told from an empty
@@ -292,6 +321,8 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() EIP712("AgreementEngine", "1") {
+        // The Op of a condition is stored in six bits.
+        assert(uint8(type(Op).max) <= OP_MASK);
         _disableInitializers();
     }
 
@@ -365,7 +396,7 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
     ) external nonReentrant {
         if (owner == address(0)) revert NotInitialized();
 
-        InputDef storage def = inputDefs[inputId];
+        StoredInputDef storage def = inputDefs[inputId];
         require(def.id != 0, "Unknown inputId");
 
         // 1. Decode DataField[]
@@ -454,7 +485,7 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
         nonces[signer]++;
         
         // Now process the input as if signer submitted it
-        InputDef storage def = inputDefs[inputId];
+        StoredInputDef storage def = inputDefs[inputId];
         require(def.id != 0, "Unknown inputId");
         
         // Decode DataField[]
@@ -541,7 +572,7 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
             InputDef calldata src = defs[i];
             require(src.id != bytes32(0), "InputDef id zero");
 
-            InputDef storage dst = inputDefs[src.id];
+            StoredInputDef storage dst = inputDefs[src.id];
             require(dst.id == bytes32(0), "Duplicate inputId");
             dst.id = src.id;
 
@@ -552,10 +583,7 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
                 dst.fields.push(src.fields[j]);
             }
 
-            // Deep copy conditions array
-            for (uint256 k = 0; k < src.conditions.length; k++) {
-                dst.conditions.push(src.conditions[k]);
-            }
+            _storeConditions(dst, src.conditions);
 
             // Deep copy verifierKeys array
             for (uint256 m = 0; m < src.verifierKeys.length; m++) {
@@ -563,6 +591,61 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
                 if (verifierRegistry[key] == address(0)) revert UnknownVerifier(key);
                 dst.verifierKeys.push(key);
             }
+        }
+    }
+
+    /**
+     * @notice Store an input's conditions in their packed form.
+     */
+    function _storeConditions(StoredInputDef storage dst, Condition[] calldata conditions) internal {
+        uint256 count = conditions.length;
+        if (count == 0) return;
+
+        bytes memory ops = new bytes(count);
+        for (uint256 k = 0; k < count; k++) {
+            Condition calldata c = conditions[k];
+            StoredCondition storage sc = dst.conds[k];
+            sc.fieldId = c.fieldId;
+
+            uint256 argLength = c.bytesArg.length;
+            uint8 kind;
+            if (argLength == 32) {
+                sc.arg = bytes32(c.bytesArg);
+                kind = ARG_ONE_WORD;
+            } else if (argLength == 64) {
+                sc.arg = bytes32(c.bytesArg[:32]);
+                sc.arg2 = bytes32(c.bytesArg[32:]);
+                kind = ARG_TWO_WORDS;
+            } else if (argLength == 0) {
+                kind = ARG_EMPTY;
+            } else {
+                dst.condLongArgs[k] = c.bytesArg;
+                kind = ARG_BYTES;
+            }
+            ops[k] = bytes1(uint8(c.op) | kind);
+        }
+        dst.condOps = ops;
+    }
+
+    /**
+     * @notice Read condition `index` of an input back into the form it was given in.
+     */
+    function _loadCondition(
+        StoredInputDef storage def,
+        uint256 index,
+        uint8 packedOp
+    ) internal view returns (Condition memory c) {
+        StoredCondition storage sc = def.conds[index];
+        c.op = Op(packedOp & OP_MASK);
+        c.fieldId = sc.fieldId;
+
+        uint8 kind = packedOp & ARG_KIND_MASK;
+        if (kind == ARG_ONE_WORD) {
+            c.bytesArg = abi.encode(sc.arg);
+        } else if (kind == ARG_TWO_WORDS) {
+            c.bytesArg = abi.encode(sc.arg, sc.arg2);
+        } else if (kind == ARG_BYTES) {
+            c.bytesArg = def.condLongArgs[index];
         }
     }
 
@@ -625,7 +708,7 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
     // ========================================================================
 
     function _persistFields(
-        InputDef storage def,
+        StoredInputDef storage def,
         DataField[] memory fields
     ) internal {
         for (uint256 i = 0; i < def.fields.length; i++) {
@@ -690,7 +773,7 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
      *      count is small, and this is a view function so reentrancy is not a concern.
      */
     function _runVerifiers(
-        InputDef storage def,
+        StoredInputDef storage def,
         bytes32 inputId,
         bytes calldata payload,
         address effectiveSender
@@ -718,7 +801,7 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
      * @notice Validate that fields match the input definition structure.
      */
     function _validateFields(
-        InputDef storage def,
+        StoredInputDef storage def,
         DataField[] memory fields
     ) internal view {
         for (uint256 i = 0; i < def.fields.length; i++) {
@@ -773,12 +856,13 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
      * @param permitSigner If non-zero, SENDER_EQ_VAR_ADDRESS conditions check this address instead of msg.sender
      */
     function _validateConditions(
-        InputDef storage def,
+        StoredInputDef storage def,
         DataField[] memory fields,
         address permitSigner
     ) internal view {
-        for (uint256 i = 0; i < def.conditions.length; i++) {
-            Condition memory c = def.conditions[i];
+        bytes memory ops = def.condOps;
+        for (uint256 i = 0; i < ops.length; i++) {
+            Condition memory c = _loadCondition(def, i, uint8(ops[i]));
             if (c.op == Op.SENDER_EQ_VAR_ADDRESS) {
                 _evalSenderCondition(c, permitSigner);
                 continue;
@@ -854,7 +938,7 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
     /**
      * @notice Check whether an input field is declared and optional.
      */
-    function _isOptionalField(InputDef storage def, bytes32 fieldId) internal view returns (bool) {
+    function _isOptionalField(StoredInputDef storage def, bytes32 fieldId) internal view returns (bool) {
         for (uint256 i = 0; i < def.fields.length; i++) {
             if (def.fields[i].fieldId == fieldId) {
                 return !def.fields[i].required;
