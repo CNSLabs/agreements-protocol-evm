@@ -308,6 +308,49 @@ describe("AgreementEngine storage layout", function () {
       await expect(agreement.submitInput(SUBMIT, one(VALUE, UINT256, uint(0)))).to.be.revertedWithCustomError(agreement, "VarNotSet").withArgs(STORED);
     });
 
+    describe("a variable that changes type", function () {
+      // One name, `stored`, written by three inputs as a string, a number and an address. Every state loops.
+      const TEXT = id("text"), NUMBER = id("number"), WHO = id("who");
+      async function setup() {
+        const harness = await ethers.deployContract("AgreementEngineStateHarness");
+        const harnessFactory: any = await ethers.deployContract("AgreementFactory", [await harness.getAddress()]);
+        const args = ["ipfs://type-change", id("type-change"), OPEN,
+          [input(TEXT, [field(STORED, STRING, true, true)]), input(NUMBER, [field(STORED, UINT256, true, true)]), input(WHO, [field(STORED, ADDRESS, true, true)])],
+          [move(OPEN, OPEN, TEXT), move(OPEN, OPEN, NUMBER), move(OPEN, OPEN, WHO)], [], [], []] as const;
+        const address = await harnessFactory.createAgreement.staticCall(...args);
+        await harnessFactory.createAgreement(...args);
+        return ethers.getContractAt("AgreementEngineStateHarness", address) as Promise<any>;
+      }
+      const gasOf = async (tx: Promise<any>) => (await (await tx).wait()).gasUsed as bigint;
+
+      it("leaves nothing of the old type in storage", async function () {
+        const agreement = await setup();
+        const raw = async () => { const [tag, a, word, text] = await agreement.getStoredVarRaw(STORED); return { tag, a, word, text }; };
+
+        await agreement.submitInput(TEXT, one(STORED, STRING, str("x".repeat(100))));
+        expect(await raw()).to.deep.equal({ tag: BigInt(STRING + 1), a: ethers.ZeroAddress, word: ZERO, text: ethers.hexlify(ethers.toUtf8Bytes("x".repeat(100))) });
+
+        await agreement.submitInput(NUMBER, one(STORED, UINT256, uint(7)));
+        expect(await raw()).to.deep.equal({ tag: BigInt(UINT256 + 1), a: ethers.ZeroAddress, word: uint(7), text: "0x" });
+
+        await agreement.submitInput(WHO, one(STORED, ADDRESS, addr(alice.address)));
+        expect(await raw()).to.deep.equal({ tag: BigInt(ADDRESS + 1), a: alice.address, word: ZERO, text: "0x" });
+
+        await agreement.submitInput(TEXT, one(STORED, STRING, str("y")));
+        expect(await raw()).to.deep.equal({ tag: BigInt(STRING + 1), a: ethers.ZeroAddress, word: ZERO, text: ethers.hexlify(ethers.toUtf8Bytes("y")) });
+      });
+
+      it("charges the clearing of a long string to the input that replaces it, not to a later one", async function () {
+        const agreement = await setup();
+        await agreement.submitInput(TEXT, one(STORED, STRING, str("x".repeat(3200))));
+        const replacing = await gasOf(agreement.submitInput(NUMBER, one(STORED, UINT256, uint(7))));
+        const later = await gasOf(agreement.connect(bob).submitInput(TEXT, one(STORED, STRING, str("y"))));
+        // Clearing a hundred slots costs several hundred thousand gas. A short string on its own costs a fraction of that.
+        expect(replacing, "the input that changes the type").to.be.greaterThan(300_000n);
+        expect(later, "the next input to store a string").to.be.lessThan(150_000n);
+      });
+    });
+
     it("takes the type of the value last stored when a field replaces a variable of another type", async function () {
       // `stored` starts as the number 5. An input then stores an address under the same name.
       const agreement = await create(

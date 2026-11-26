@@ -767,10 +767,26 @@ contract AgreementEngine is Initializable, ReentrancyGuardTransient, EIP712 {
      *         already been checked to decode as `fType`.
      */
     function _writeVar(bytes32 id, FieldType fType, bytes memory data) internal {
+        StoredVar storage v = vars[id];
+        uint8 newTag = uint8(fType) + 1;
+        uint8 oldTag = v.tag;
+        if (oldTag != 0 && oldTag != newTag) {
+            // The variable changes type. What it held under the old type is
+            // removed now, by the input that replaces it, so that only the
+            // member of the current type is ever set and no later writer is
+            // left to clear a long string it did not store.
+            FieldType oldType = FieldType(oldTag - 1);
+            if (oldType == FieldType.STRING) {
+                delete v.str;
+            } else if (oldType == FieldType.UINT256 || oldType == FieldType.BYTES32) {
+                v.word = bytes32(0);
+            } else {
+                v.addr = address(0);
+            }
+        }
         // Written through the mapping, not through `v`, so that static
         // analysis sees `vars` being assigned.
-        vars[id].tag = uint8(fType) + 1;
-        StoredVar storage v = vars[id];
+        vars[id].tag = newTag;
         if (fType == FieldType.ADDRESS) {
             v.addr = abi.decode(data, (address));
         } else if (fType == FieldType.BOOL) {

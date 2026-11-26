@@ -15,6 +15,12 @@ contract AgreementEngineStateHarness is AgreementEngine {
         if (fType == FieldType.STRING) return (fType, abi.encode(string(v.str)));
         return (fType, abi.encode(v.word));
     }
+
+    /// @dev Every member of a stored variable as it is in storage, whatever its type.
+    function getStoredVarRaw(bytes32 fieldId) external view returns (uint8 tag, address addr, bytes32 word, bytes memory str) {
+        StoredVar storage v = vars[fieldId];
+        return (v.tag, v.addr, v.word, v.str);
+    }
 }
 
 /// @dev Verifiers must see pre-submission storage; actions must see committed storage.
