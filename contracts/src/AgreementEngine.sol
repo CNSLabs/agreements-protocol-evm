@@ -178,7 +178,12 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
 
     // Single-agreement storage (no agreementId keys)
     mapping(bytes32 => InputDef) internal inputDefs;
-    Transition[] internal transitions;
+    // Transitions, looked up by (fromState, inputId). The first transition
+    // registered for a pair is the one that applies, as when they were a list
+    // searched in order. A target state of zero cannot be told from an empty
+    // slot, so that rare case is recorded in `transitionToZero`.
+    mapping(bytes32 => mapping(bytes32 => bytes32)) internal transitionTo;
+    mapping(bytes32 => mapping(bytes32 => bool)) internal transitionToZero;
     mapping(bytes32 => address) public verifierRegistry;
     mapping(bytes32 => StoredVar) internal vars;
 
@@ -561,7 +566,15 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
      */
     function _storeTransitions(Transition[] calldata trans) internal {
         for (uint256 i = 0; i < trans.length; i++) {
-            transitions.push(trans[i]);
+            Transition calldata t = trans[i];
+            if (transitionTo[t.fromState][t.inputId] != bytes32(0) || transitionToZero[t.fromState][t.inputId]) {
+                continue; // an earlier transition for this pair takes precedence
+            }
+            if (t.toState == bytes32(0)) {
+                transitionToZero[t.fromState][t.inputId] = true;
+            } else {
+                transitionTo[t.fromState][t.inputId] = t.toState;
+            }
         }
     }
 
@@ -1139,14 +1152,9 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
         bytes32 fromState,
         bytes32 inputId
     ) internal view returns (bool, bytes32) {
-        uint256 len = transitions.length;
-        for (uint256 i = 0; i < len; i++) {
-            Transition memory t = transitions[i];
-            if (t.fromState == fromState && t.inputId == inputId) {
-                return (true, t.toState);
-            }
-        }
-        return (false, bytes32(0));
+        bytes32 toState = transitionTo[fromState][inputId];
+        if (toState != bytes32(0)) return (true, toState);
+        return (transitionToZero[fromState][inputId], bytes32(0));
     }
 
     /**
