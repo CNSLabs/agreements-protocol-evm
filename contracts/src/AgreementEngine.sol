@@ -147,12 +147,19 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
     ///      takes two slots where the calldata form would take four.
     struct StoredInputDef {
         bytes32 id;
-        InputFieldDef[] fields;
+        // One byte per field: its FieldType in the low three bits, then
+        // FIELD_REQUIRED and FIELD_PERSIST. The field ids are in `fieldIds`.
+        bytes fieldFlags;
+        mapping(uint256 => bytes32) fieldIds;
         bytes32[] verifierKeys;
         bytes condOps;
         mapping(uint256 => StoredCondition) conds;
         mapping(uint256 => bytes) condLongArgs;
     }
+
+    uint8 private constant FIELD_TYPE_MASK = 0x07;
+    uint8 private constant FIELD_REQUIRED = 0x08;
+    uint8 private constant FIELD_PERSIST = 0x10;
 
     uint8 private constant OP_MASK = 0x3f;
     uint8 private constant ARG_KIND_MASK = 0xc0;
@@ -323,6 +330,8 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
     constructor() EIP712("AgreementEngine", "1") {
         // The Op of a condition is stored in six bits.
         assert(uint8(type(Op).max) <= OP_MASK);
+        // The FieldType of an input field is stored in three bits.
+        assert(uint8(type(FieldType).max) <= FIELD_TYPE_MASK);
         _disableInitializers();
     }
 
@@ -576,11 +585,22 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
             require(dst.id == bytes32(0), "Duplicate inputId");
             dst.id = src.id;
 
-            // Deep copy fields array
-            for (uint256 j = 0; j < src.fields.length; j++) {
-                // A condition on this id reads the block time, never a submitted field.
-                if (src.fields[j].fieldId == BLOCK_TIME_FIELD) revert ReservedFieldId(BLOCK_TIME_FIELD);
-                dst.fields.push(src.fields[j]);
+            // Copy the fields in their packed form
+            uint256 fieldCount = src.fields.length;
+            if (fieldCount != 0) {
+                bytes memory flags = new bytes(fieldCount);
+                for (uint256 j = 0; j < fieldCount; j++) {
+                    InputFieldDef calldata field = src.fields[j];
+                    // A condition on this id reads the block time, never a submitted field.
+                    if (field.fieldId == BLOCK_TIME_FIELD) revert ReservedFieldId(BLOCK_TIME_FIELD);
+                    dst.fieldIds[j] = field.fieldId;
+                    flags[j] = bytes1(
+                        uint8(field.fType) |
+                        (field.required ? FIELD_REQUIRED : 0) |
+                        (field.persist ? FIELD_PERSIST : 0)
+                    );
+                }
+                dst.fieldFlags = flags;
             }
 
             _storeConditions(dst, src.conditions);
@@ -711,27 +731,25 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
         StoredInputDef storage def,
         DataField[] memory fields
     ) internal {
-        for (uint256 i = 0; i < def.fields.length; i++) {
-            InputFieldDef storage fd = def.fields[i];
-            if (!fd.persist) continue;
+        bytes memory flags = def.fieldFlags;
+        for (uint256 i = 0; i < flags.length; i++) {
+            uint8 flag = uint8(flags[i]);
+            if (flag & FIELD_PERSIST == 0) continue;
+            bytes32 fieldId = def.fieldIds[i];
 
             // Find the matching field in this input instance
-            bool found = false;
             for (uint256 j = 0; j < fields.length; j++) {
-                if (fields[j].id == fd.fieldId) {
+                if (fields[j].id == fieldId) {
                     DataField memory f = fields[j];
 
                     // Type sanity check
-                    require(f.fType == fd.fType, "Persist field type mismatch");
+                    require(uint8(f.fType) == flag & FIELD_TYPE_MASK, "Persist field type mismatch");
 
                     // Store/overwrite current value
-                    _writeVar(fd.fieldId, f.fType, f.data);
-
-                    found = true;
+                    _writeVar(fieldId, f.fType, f.data);
                     break;
                 }
             }
-            // If persist = true, we already enforced `required = true` in _validateFields
         }
     }
 
@@ -804,20 +822,23 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
         StoredInputDef storage def,
         DataField[] memory fields
     ) internal view {
-        for (uint256 i = 0; i < def.fields.length; i++) {
-            InputFieldDef storage fd = def.fields[i];
+        bytes memory flags = def.fieldFlags;
+        for (uint256 i = 0; i < flags.length; i++) {
+            uint8 flag = uint8(flags[i]);
+            bytes32 fieldId = def.fieldIds[i];
+            FieldType fType = FieldType(flag & FIELD_TYPE_MASK);
             bool found = false;
 
             for (uint256 j = 0; j < fields.length; j++) {
-                if (fields[j].id == fd.fieldId) {
+                if (fields[j].id == fieldId) {
                     found = true;
-                    require(fields[j].fType == fd.fType, "Field type mismatch");
-                    _validateFieldDecoding(fields[j].data, fd.fType);
+                    require(fields[j].fType == fType, "Field type mismatch");
+                    _validateFieldDecoding(fields[j].data, fType);
                     break;
                 }
             }
 
-            if (fd.required) {
+            if (flag & FIELD_REQUIRED != 0) {
                 require(found, "Required field missing");
             }
         }
@@ -939,9 +960,10 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
      * @notice Check whether an input field is declared and optional.
      */
     function _isOptionalField(StoredInputDef storage def, bytes32 fieldId) internal view returns (bool) {
-        for (uint256 i = 0; i < def.fields.length; i++) {
-            if (def.fields[i].fieldId == fieldId) {
-                return !def.fields[i].required;
+        bytes memory flags = def.fieldFlags;
+        for (uint256 i = 0; i < flags.length; i++) {
+            if (def.fieldIds[i] == fieldId) {
+                return uint8(flags[i]) & FIELD_REQUIRED == 0;
             }
         }
         return false;
