@@ -65,9 +65,22 @@ type Rng = ReturnType<typeof rng>;
     const verifierAddress = await verifier.getAddress();
 
     const FIELD_IDS = ["f0", "f1", "f2", "f3", "f4", "f5"].map(id);
+    // Enough further ids for an input with more than 31 fields, where the byte kept
+    // for each field no longer fits in one slot.
+    const MORE_FIELD_IDS = Array.from({ length: 40 }, (_, n) => id(`g${n}`));
     const STATES = ["S0", "S1", "S2", "S3"].map(id);
     const INPUT_IDS = ["i0", "i1", "i2", "i3"].map(id);
     const VERIFIER_KEYS = ["k0", "k1"].map(id);
+
+    // Action targets that call back into the agreement while its transition is running:
+    // another input, directly; the same, with the failure ignored; and a permit cancellation.
+    const Reentrant = await ethers.getContractFactory("ReentrantActionTarget");
+    const reenterInput = engineAbi.encodeFunctionData("submitInput", [INPUT_IDS[0], coder.encode([DATA_FIELDS], [[]])]);
+    const reentrantTargets = await Promise.all([
+      Reentrant.deploy(reenterInput, false),
+      Reentrant.deploy(reenterInput, true),
+      Reentrant.deploy(engineAbi.encodeFunctionData("cancelPermits"), false),
+    ].map(async (deployment) => (await deployment).getAddress()));
 
     // ---- values -----------------------------------------------------------
     const validValue = (r: Rng, fType: number): string => {
@@ -95,9 +108,10 @@ type Rng = ReturnType<typeof rng>;
       if (op === 14) return coder.encode(["address"], [r.pick(people).address]);
       if (op === 16) return r.chance(0.7) ? "0x" : coder.encode(["bytes32"], [target]);
       if (op === 17) {
+        const long = r.chance(0.1);
         return coder.encode(["bytes32[]", "address[]"], [
-          Array.from({ length: r.int(3) }, () => r.pick(FIELD_IDS)),
-          Array.from({ length: r.int(3) }, () => r.pick(people).address),
+          Array.from({ length: long ? 20 : r.int(3) }, () => r.pick(FIELD_IDS)),
+          Array.from({ length: long ? 20 : r.int(3) }, () => r.pick(people).address),
         ]);
       }
       const offset = r.chance(0.8) ? BigInt(r.int(5) - 2) : r.pick([ethers.MaxInt256, ethers.MinInt256, -1n, 1n]);
@@ -120,13 +134,21 @@ type Rng = ReturnType<typeof rng>;
       const useVerifier = r.chance(0.15);
       const verifiers = useVerifier ? [{ key: VERIFIER_KEYS[0], verifier: verifierAddress }] : [];
       const inputDefs = Array.from({ length: 1 + r.int(4) }, (_, n) => {
-        const ids = [...FIELD_IDS].sort(() => r.next() - 0.5).slice(0, 1 + r.int(4));
-        const fields = ids.map((fieldId) => ({ fieldId, fType: typeOfId(r, fieldId), required: r.chance(0.8), persist: r.chance(0.5) }));
+        // The first input is sometimes open to anyone with no fields, which is what a call back
+        // from an action target would need in order to be accepted.
+        const open = n === 0 && r.chance(0.3);
+        const many = !open && r.chance(0.06);
+        const ids = open ? [] : many
+          ? [...FIELD_IDS, ...MORE_FIELD_IDS].sort(() => r.next() - 0.5).slice(0, 30 + r.int(11))
+          : [...FIELD_IDS].sort(() => r.next() - 0.5).slice(0, 1 + r.int(4));
+        const fields = ids.map((fieldId) => ({ fieldId, fType: typeOfId(r, fieldId), required: r.chance(many ? 0.5 : 0.8), persist: r.chance(0.5) }));
         const conditions: { op: number; fieldId: string; bytesArg: string }[] = [];
+        if (open) return { id: INPUT_IDS[n], fields, conditions, verifierKeys: [] };
         if (r.chance(0.45)) conditions.push({ op: 16, fieldId: A, bytesArg: "0x" });
         else if (r.chance(0.3)) conditions.push({ op: 17, fieldId: ethers.ZeroHash, bytesArg: coder.encode(["bytes32[]", "address[]"], [[A], [r.pick(people).address]]) });
         for (const field of fields) {
-          if (!r.chance(0.5)) continue;
+          // Few conditions on an input with very many fields, or none of its submissions would pass them all.
+          if (!r.chance(many ? 0.03 : 0.5)) continue;
           if (field.fType === 0) {
             const flavour = r.int(3);
             if (flavour === 0) conditions.push({ op: 4 + r.int(5), fieldId: field.fieldId, bytesArg: coder.encode(["uint256"], [r.int(5)]) });
@@ -172,7 +194,7 @@ type Rng = ReturnType<typeof rng>;
         ? Array.from({ length: 1 + r.int(2) }, () => {
             const t = r.pick(transitions);
             return {
-              fromState: t.fromState, inputId: t.inputId, target: r.chance(0.9) ? tokenAddress : bob.address, value: 0,
+              fromState: t.fromState, inputId: t.inputId, target: r.chance(0.4) ? r.pick(reentrantTargets) : r.chance(0.9) ? tokenAddress : bob.address, value: 0,
               data: r.pick([
                 token.interface.encodeFunctionData("approve", [alice.address, 1]),
                 token.interface.encodeFunctionData("transfer", [alice.address, 0]),
@@ -193,8 +215,9 @@ type Rng = ReturnType<typeof rng>;
         : [];
       const inputCount = 1 + r.int(4);
       const inputDefs = Array.from({ length: inputCount }, (_, n) => {
-        const fields = Array.from({ length: r.int(5) }, () => ({
-          fieldId: r.chance(0.03) ? BLOCK_TIME_FIELD : r.pick(FIELD_IDS),
+        const manyFields = r.chance(0.05);
+        const fields = Array.from({ length: manyFields ? 30 + r.int(11) : r.int(5) }, () => ({
+          fieldId: r.chance(0.03) ? BLOCK_TIME_FIELD : r.pick(manyFields ? MORE_FIELD_IDS : FIELD_IDS),
           fType: r.int(5),
           required: r.chance(0.7),
           persist: r.chance(0.5),
@@ -235,7 +258,7 @@ type Rng = ReturnType<typeof rng>;
             return {
               fromState: t.fromState,
               inputId: t.inputId,
-              target: r.chance(0.8) ? tokenAddress : r.chance(0.5) ? bob.address : ethers.ZeroAddress,
+              target: r.chance(0.3) ? r.pick(reentrantTargets) : r.chance(0.8) ? tokenAddress : r.chance(0.5) ? bob.address : ethers.ZeroAddress,
               value: r.chance(0.95) ? 0 : 1,
               // approve works without a balance; transfer of a positive amount fails; a short call has no selector.
               data: r.pick([
@@ -301,8 +324,9 @@ type Rng = ReturnType<typeof rng>;
     };
     const { chainId } = await ethers.provider.getNetwork();
 
-    let created = 0, refusedAtCreation = 0, accepted = 0, refused = 0, actionsRun = 0, viaPermit = 0;
+    let created = 0, refusedAtCreation = 0, accepted = 0, refused = 0, actionsRun = 0, viaPermit = 0, manyFieldInputs = 0, reentrantActionsRun = 0;
     const actionTopic = engineAbi.getEvent("ActionExecuted")!.topicHash;
+    const acceptedTopic = engineAbi.getEvent("InputAccepted")!.topicHash;
     const permitTopic = engineAbi.getEvent("InputSubmittedWithPermit")!.topicHash;
     const refusalKinds = new Map<string, number>();
 
@@ -398,13 +422,16 @@ type Rng = ReturnType<typeof rng>;
         const refReceipt = await (await refCall.from.sendTransaction({ to: ref.address, data: refCall.data })).wait();
         const curReceipt = await (await curCall.from.sendTransaction({ to: cur.address, data: curCall.data })).wait();
         expect(normalizeLogs(curReceipt, cur.address, ref.address), `${at}: events`).to.deep.equal(normalizeLogs(refReceipt, ref.address, cur.address));
-        if (refReceipt.logs.some((l: any) => l.topics[0] === actionTopic)) actionsRun++;
+        const ranAction = refReceipt.logs.find((l: any) => l.topics[0] === actionTopic);
+        if (ranAction) actionsRun++;
+        if (ranAction && reentrantTargets.some((target) => ranAction.data.toLowerCase().includes(target.slice(2).toLowerCase()))) reentrantActionsRun++;
+        if ((refReceipt.logs.find((l: any) => l.topics[0] === acceptedTopic)?.data.length ?? 0) > 2 + 64 * 40) manyFieldInputs++;
         if (refReceipt.logs.some((l: any) => l.topics[0] === permitTopic)) viaPermit++;
         await sameState(`after step ${step}`);
       }
     }
 
-    console.log(`      agreements created: ${created}, refused at creation: ${refusedAtCreation}; submissions accepted: ${accepted} (${viaPermit} by permit, ${actionsRun} ran an action), refused: ${refused}`);
+    console.log(`      agreements created: ${created}, refused at creation: ${refusedAtCreation}; submissions accepted: ${accepted} (${viaPermit} by permit, ${actionsRun} ran an action, ${reentrantActionsRun} of those a target that calls back, ${manyFieldInputs} with a very long payload), refused: ${refused}`);
     console.log(`      distinct refusal selectors seen: ${refusalKinds.size} (${[...refusalKinds.entries()].sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} x${v}`).join(", ")})`);
     expect(created, "some agreements must be created for the comparison to mean anything").to.be.greaterThan(SEEDS / 10);
     expect(accepted, "some submissions must be accepted for the comparison to mean anything").to.be.greaterThan(0);
