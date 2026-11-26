@@ -588,7 +588,9 @@ contract AgreementEngine is Initializable, ReentrancyGuardTransient, EIP712 {
 
             StoredInputDef storage dst = inputDefs[src.id];
             require(dst.id == bytes32(0), "Duplicate inputId");
-            dst.id = src.id;
+            // Written through the mapping, not through `dst`, so that static
+            // analysis sees `inputDefs` being assigned.
+            inputDefs[src.id].id = src.id;
 
             // Copy the fields in their packed form
             uint256 fieldCount = src.fields.length;
@@ -763,8 +765,10 @@ contract AgreementEngine is Initializable, ReentrancyGuardTransient, EIP712 {
      *         already been checked to decode as `fType`.
      */
     function _writeVar(bytes32 id, FieldType fType, bytes memory data) internal {
+        // Written through the mapping, not through `v`, so that static
+        // analysis sees `vars` being assigned.
+        vars[id].tag = uint8(fType) + 1;
         StoredVar storage v = vars[id];
-        v.tag = uint8(fType) + 1;
         if (fType == FieldType.ADDRESS) {
             v.addr = abi.decode(data, (address));
         } else if (fType == FieldType.BOOL) {
