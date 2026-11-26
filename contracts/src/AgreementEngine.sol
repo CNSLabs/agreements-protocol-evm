@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/proxy/utils/Initializable.sol";
-import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 import "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import "@openzeppelin/contracts/utils/cryptography/SignatureChecker.sol";
 
@@ -37,7 +37,7 @@ interface IInputVerifier {
  * @dev Each clone instance represents one agreement. The implementation contract
  *      has initializers disabled and cannot be used directly.
  */
-contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
+contract AgreementEngine is Initializable, ReentrancyGuardTransient, EIP712 {
     // ========================================================================
     // TYPES & ENUMS
     // ========================================================================
@@ -189,9 +189,8 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
      */
     struct Action {
         address target;
-        uint256 value;
+        bool exists;   // shares the slot of `target`
         bytes data;
-        bool exists;
     }
 
     /**
@@ -216,6 +215,11 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
     bytes32 public initialState;
     bytes32 public currentState;
     address public owner;
+    // Whether any action or any verifier was registered. They share the slot of
+    // `owner`, which every submission reads first, so an agreement without
+    // actions or verifiers does not pay to look for them.
+    bool internal hasActions;
+    bool internal hasVerifiers;
 
     // Single-agreement storage (no agreementId keys)
     mapping(bytes32 => StoredInputDef) internal inputDefs;
@@ -562,6 +566,7 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
      * @dev Called during initialization; verifiers are optional (pass empty array).
      */
     function _storeVerifiers(VerifierInit[] calldata verifiers_) internal {
+        if (verifiers_.length != 0) hasVerifiers = true;
         for (uint256 i = 0; i < verifiers_.length; i++) {
             VerifierInit calldata verifierInit = verifiers_[i];
             if (verifierInit.verifier == address(0)) revert VerifierZero();
@@ -707,6 +712,7 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
      * @dev Called during initialization; actions are optional (pass empty array).
      */
     function _storeActions(ActionInit[] calldata actions_) internal {
+        if (actions_.length != 0) hasActions = true;
         for (uint256 i = 0; i < actions_.length; i++) {
             ActionInit calldata a = actions_[i];
             if (a.target == address(0)) revert ActionTargetZero();
@@ -715,9 +721,8 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
             if (a.value != 0) revert ActionValueNotSupported(a.fromState, a.inputId, a.value);
             actions[a.fromState][a.inputId] = Action({
                 target: a.target,
-                value: a.value,
-                data: a.data,
-                exists: true
+                exists: true,
+                data: a.data
             });
             emit ActionRegistered(a.fromState, a.inputId, a.target, a.value, a.data);
         }
@@ -796,7 +801,10 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
         bytes calldata payload,
         address effectiveSender
     ) internal view {
-        for (uint256 i = 0; i < def.verifierKeys.length; i++) {
+        // An input can only name a verifier that was registered at creation.
+        if (!hasVerifiers) return;
+        uint256 count = def.verifierKeys.length;
+        for (uint256 i = 0; i < count; i++) {
             bytes32 key = def.verifierKeys[i];
             address verifier = verifierRegistry[key];
             require(verifier != address(0), "Verifier not registered");
@@ -1266,6 +1274,7 @@ contract AgreementEngine is Initializable, ReentrancyGuard, EIP712 {
      * Reverts on failure to preserve atomicity.
      */
     function _executeActionIfAny(bytes32 fromState, bytes32 toState, bytes32 inputId) internal {
+        if (!hasActions) return;
         Action storage a = actions[fromState][inputId];
         if (!a.exists) return;
 
